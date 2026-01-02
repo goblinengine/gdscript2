@@ -2787,6 +2787,8 @@ Vector<String> GDScriptLanguage::get_reserved_words() const {
 		"is",
 		"not",
 		"or",
+		"then",
+		"elthen",
 		// Special values (tokenizer treats them as literals, not as tokens).
 		"false",
 		"null",

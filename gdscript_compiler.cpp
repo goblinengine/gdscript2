@@ -870,6 +870,45 @@ GDScriptCodeGenerator::Address GDScriptCompiler::_parse_expression(CodeGen &code
 			GDScriptCodeGenerator::Address result = codegen.add_temporary(_gdtype_from_datatype(binary->get_datatype(), codegen.script));
 
 			switch (binary->operation) {
+				case GDScriptParser::BinaryOpNode::OP_SAFE_NAVIGATE: {
+					GDScriptCodeGenerator::Address left_operand = _parse_expression(codegen, r_error, binary->left_operand);
+					gen->write_start_ternary(result);
+					gen->write_ternary_condition(left_operand);
+
+					GDScriptCodeGenerator::Address right_operand = _parse_expression(codegen, r_error, binary->right_operand);
+					gen->write_ternary_true_expr(right_operand);
+					if (right_operand.mode == GDScriptCodeGenerator::Address::TEMPORARY) {
+						gen->pop_temporary();
+					}
+
+					gen->write_ternary_false_expr(left_operand);
+					if (left_operand.mode == GDScriptCodeGenerator::Address::TEMPORARY) {
+						gen->pop_temporary();
+					}
+
+					gen->write_end_ternary();
+				} break;
+				case GDScriptParser::BinaryOpNode::OP_NULL_COALESCE: {
+					GDScriptCodeGenerator::Address left_operand = _parse_expression(codegen, r_error, binary->left_operand);
+					gen->write_start_ternary(result);
+
+					// We want left != null as the condition: reuse ternary by checking truthiness of left.
+					gen->write_ternary_condition(left_operand);
+
+					GDScriptCodeGenerator::Address true_expr = left_operand;
+					GDScriptCodeGenerator::Address false_expr = _parse_expression(codegen, r_error, binary->right_operand);
+					gen->write_ternary_true_expr(true_expr);
+					if (true_expr.mode == GDScriptCodeGenerator::Address::TEMPORARY) {
+						gen->pop_temporary();
+					}
+
+					gen->write_ternary_false_expr(false_expr);
+					if (false_expr.mode == GDScriptCodeGenerator::Address::TEMPORARY) {
+						gen->pop_temporary();
+					}
+
+					gen->write_end_ternary();
+				} break;
 				case GDScriptParser::BinaryOpNode::OP_LOGIC_AND: {
 					// AND operator with early out on failure.
 					GDScriptCodeGenerator::Address left_operand = _parse_expression(codegen, r_error, binary->left_operand);

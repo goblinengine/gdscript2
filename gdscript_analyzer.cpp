@@ -3101,6 +3101,40 @@ void GDScriptAnalyzer::reduce_binary_op(GDScriptParser::BinaryOpNode *p_binary_o
 		return;
 	}
 
+	if (p_binary_op->operation == GDScriptParser::BinaryOpNode::OP_SAFE_NAVIGATE || p_binary_op->operation == GDScriptParser::BinaryOpNode::OP_NULL_COALESCE) {
+		// Short-circuiting nullish operators; avoid Variant operator lookup.
+		bool is_nullish = (p_binary_op->operation == GDScriptParser::BinaryOpNode::OP_NULL_COALESCE);
+
+		if (p_binary_op->left_operand->is_constant) {
+			Variant left_val = p_binary_op->left_operand->reduced_value;
+			bool use_left = is_nullish ? (left_val.get_type() != Variant::NIL) : left_val.booleanize();
+			if (!use_left && p_binary_op->right_operand->is_constant) {
+				p_binary_op->is_constant = true;
+				p_binary_op->reduced_value = p_binary_op->right_operand->reduced_value;
+			} else if (use_left) {
+				p_binary_op->is_constant = true;
+				p_binary_op->reduced_value = left_val;
+			}
+		}
+
+		GDScriptParser::DataType result_type;
+		if (p_binary_op->operation == GDScriptParser::BinaryOpNode::OP_SAFE_NAVIGATE) {
+			result_type = right_type.is_set() ? right_type : left_type;
+		} else {
+			// Null coalescing keeps left type when present, otherwise right.
+			if (left_type.is_set() && left_type.builtin_type != Variant::NIL) {
+				result_type = left_type;
+			} else {
+				result_type = right_type;
+			}
+		}
+		p_binary_op->set_datatype(result_type);
+		if (!result_type.is_hard_type()) {
+			mark_node_unsafe(p_binary_op);
+		}
+		return;
+	}
+
 #ifdef DEBUG_ENABLED
 	if (p_binary_op->variant_op == Variant::OP_DIVIDE &&
 			(left_type.builtin_type == Variant::INT ||
