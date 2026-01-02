@@ -37,9 +37,6 @@
 #include "core/os/os.h"
 #include "core/profiling/profiling.h"
 
-static constexpr int _inline_cache_ptr_slots = sizeof(void *) / sizeof(int);
-static_assert(sizeof(void *) % sizeof(int) == 0, "Pointer size must be divisible by int size for inline caches.");
-
 #ifdef DEBUG_ENABLED
 
 static bool _profile_count_as_native(const Object *p_base_obj, const StringName &p_methodname) {
@@ -502,6 +499,9 @@ void (*type_init_function_table[])(Variant *) = {
 
 Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_args, int p_argcount, Callable::CallError &r_err, CallState *p_state) {
 	GodotProfileZoneScript(this, source, name, name, _initial_line);
+
+	constexpr int k_inline_cache_ptr_slots = sizeof(void *) / sizeof(int);
+	static_assert(sizeof(void *) % sizeof(int) == 0, "Pointer size must be divisible by int size for inline caches.");
 
 	OPCODES_TABLE;
 
@@ -1201,7 +1201,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 			DISPATCH_OPCODE;
 
 			OPCODE(OPCODE_SET_NAMED) {
-				constexpr int _cache_args = 3 + (_inline_cache_ptr_slots * 2);
+				constexpr int _cache_args = 3 + (k_inline_cache_ptr_slots * 2);
 				CHECK_SPACE(_cache_args);
 
 				GET_VARIANT_PTR(dst, 0);
@@ -1223,7 +1223,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					}
 					if (obj) {
 						ClassDB::ClassInfo **cached_class_slot = reinterpret_cast<ClassDB::ClassInfo **>(&_code_ptr[ip + 4]);
-						ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 4 + _inline_cache_ptr_slots]);
+						ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 4 + k_inline_cache_ptr_slots]);
 
 						ClassDB::ClassInfo *info = ClassDB::classes.getptr(obj->get_class_name());
 						ClassDB::PropertySetGet *psg = nullptr;
@@ -1290,7 +1290,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					OPCODE_BREAK;
 				}
 	#endif
-				ip += 4 + (_inline_cache_ptr_slots * 2);
+				ip += 4 + (k_inline_cache_ptr_slots * 2);
 			}
 			DISPATCH_OPCODE;
 
@@ -1310,7 +1310,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 			DISPATCH_OPCODE;
 
 			OPCODE(OPCODE_GET_NAMED) {
-				constexpr int _cache_args = 4 + (_inline_cache_ptr_slots * 2);
+				constexpr int _cache_args = 4 + (k_inline_cache_ptr_slots * 2);
 				CHECK_SPACE(_cache_args);
 
 				GET_VARIANT_PTR(src, 0);
@@ -1333,7 +1333,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					}
 					if (obj) {
 						ClassDB::ClassInfo **cached_class_slot = reinterpret_cast<ClassDB::ClassInfo **>(&_code_ptr[ip + 4]);
-						ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 4 + _inline_cache_ptr_slots]);
+						ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 4 + k_inline_cache_ptr_slots]);
 
 						ClassDB::ClassInfo *info = ClassDB::classes.getptr(obj->get_class_name());
 						ClassDB::PropertySetGet *psg = nullptr;
@@ -1391,7 +1391,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 	#endif
 				}
 
-				ip += 4 + (_inline_cache_ptr_slots * 2);
+				ip += 4 + (k_inline_cache_ptr_slots * 2);
 			}
 			DISPATCH_OPCODE;
 
@@ -1411,7 +1411,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 			DISPATCH_OPCODE;
 
 			OPCODE(OPCODE_SET_MEMBER) {
-				constexpr int _cache_args = 3 + (_inline_cache_ptr_slots * 2);
+				constexpr int _cache_args = 3 + (k_inline_cache_ptr_slots * 2);
 				CHECK_SPACE(_cache_args);
 				GET_VARIANT_PTR(src, 0);
 				int indexname = _code_ptr[ip + 2];
@@ -1424,7 +1424,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 				if (p_instance && p_instance->owner) {
 					Object *obj = p_instance->owner;
 					ClassDB::ClassInfo **cached_class_slot = reinterpret_cast<ClassDB::ClassInfo **>(&_code_ptr[ip + 3]);
-					ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 3 + _inline_cache_ptr_slots]);
+					ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 3 + k_inline_cache_ptr_slots]);
 
 					ClassDB::ClassInfo *info = ClassDB::classes.getptr(obj->get_class_name());
 					ClassDB::PropertySetGet *psg = nullptr;
@@ -1488,12 +1488,12 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					OPCODE_BREAK;
 				}
 	#endif
-				ip += 3 + (_inline_cache_ptr_slots * 2);
+				ip += 3 + (k_inline_cache_ptr_slots * 2);
 			}
 			DISPATCH_OPCODE;
 
 			OPCODE(OPCODE_GET_MEMBER) {
-				constexpr int _cache_args = 3 + (_inline_cache_ptr_slots * 2);
+				constexpr int _cache_args = 3 + (k_inline_cache_ptr_slots * 2);
 				CHECK_SPACE(_cache_args);
 				GET_VARIANT_PTR(dst, 0);
 				int indexname = _code_ptr[ip + 2];
@@ -1506,7 +1506,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 				if (p_instance && p_instance->owner) {
 					Object *obj = p_instance->owner;
 					ClassDB::ClassInfo **cached_class_slot = reinterpret_cast<ClassDB::ClassInfo **>(&_code_ptr[ip + 3]);
-					ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 3 + _inline_cache_ptr_slots]);
+					ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 3 + k_inline_cache_ptr_slots]);
 
 					ClassDB::ClassInfo *info = ClassDB::classes.getptr(obj->get_class_name());
 					ClassDB::PropertySetGet *psg = nullptr;
@@ -1566,7 +1566,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 	#endif
 				}
 
-				ip += 3 + (_inline_cache_ptr_slots * 2);
+				ip += 3 + (k_inline_cache_ptr_slots * 2);
 			}
 			DISPATCH_OPCODE;
 
