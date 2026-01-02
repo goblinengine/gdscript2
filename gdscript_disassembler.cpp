@@ -35,6 +35,9 @@
 
 #include "core/string/string_builder.h"
 
+static constexpr int _inline_cache_ptr_slots = sizeof(void *) / sizeof(int);
+static_assert(sizeof(void *) % sizeof(int) == 0, "Pointer size must be divisible by int size for inline caches.");
+
 static String _get_variant_string(const Variant &p_variant) {
 	String txt;
 	if (p_variant.get_type() == Variant::STRING) {
@@ -308,7 +311,7 @@ void GDScriptFunction::disassemble(const Vector<String> &p_code_lines) const {
 				text += "\"] = ";
 				text += DADDR(2);
 
-				incr += 4;
+				incr += 4 + (_inline_cache_ptr_slots * 2);
 			} break;
 			case OPCODE_SET_NAMED_VALIDATED: {
 				text += "set_named validated ";
@@ -329,7 +332,7 @@ void GDScriptFunction::disassemble(const Vector<String> &p_code_lines) const {
 				text += _global_names_ptr[_code_ptr[ip + 3]];
 				text += "\"]";
 
-				incr += 4;
+				incr += 4 + (_inline_cache_ptr_slots * 2);
 			} break;
 			case OPCODE_GET_NAMED_VALIDATED: {
 				text += "get_named validated ";
@@ -349,7 +352,7 @@ void GDScriptFunction::disassemble(const Vector<String> &p_code_lines) const {
 				text += "\"] = ";
 				text += DADDR(1);
 
-				incr += 3;
+				incr += 3 + (_inline_cache_ptr_slots * 2);
 			} break;
 			case OPCODE_GET_MEMBER: {
 				text += "get_member ";
@@ -359,7 +362,7 @@ void GDScriptFunction::disassemble(const Vector<String> &p_code_lines) const {
 				text += _global_names_ptr[_code_ptr[ip + 2]];
 				text += "\"]";
 
-				incr += 3;
+				incr += 3 + (_inline_cache_ptr_slots * 2);
 			} break;
 			case OPCODE_SET_STATIC_VARIABLE: {
 				Ref<GDScript> gdscript;

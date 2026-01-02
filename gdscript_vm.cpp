@@ -32,6 +32,8 @@
 #include "gdscript_function.h"
 #include "gdscript_lambda_callable.h"
 
+#include "core/object/class_db.h"
+
 #include "core/os/os.h"
 #include "core/profiling/profiling.h"
 
@@ -102,6 +104,9 @@ static String _get_var_type(const Variant *p_var) {
 
 	return basestr;
 }
+
+static constexpr int _inline_cache_ptr_slots = sizeof(void *) / sizeof(int);
+static_assert(sizeof(void *) % sizeof(int) == 0, "Pointer size must be divisible by int size for inline caches.");
 
 void GDScriptFunction::_profile_native_call(uint64_t p_t_taken, const String &p_func_name, const String &p_instance_class_name) {
 	HashMap<String, Profile::NativeProfile>::Iterator inner_prof = profile.native_calls.find(p_func_name);
@@ -1196,20 +1201,77 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 			DISPATCH_OPCODE;
 
 			OPCODE(OPCODE_SET_NAMED) {
-				CHECK_SPACE(3);
+				constexpr int _cache_args = 3 + (_inline_cache_ptr_slots * 2);
+				CHECK_SPACE(_cache_args);
 
 				GET_VARIANT_PTR(dst, 0);
 				GET_VARIANT_PTR(value, 1);
 
 				int indexname = _code_ptr[ip + 3];
-
 				GD_ERR_BREAK(indexname < 0 || indexname >= _global_names_count);
 				const StringName *index = &_global_names_ptr[indexname];
 
-				bool valid;
-				dst->set_named(*index, *value, valid);
+				bool valid = false;
+				bool used_fast_path = false;
 
-#ifdef DEBUG_ENABLED
+				if (dst->get_type() == Variant::OBJECT) {
+					bool was_freed = false;
+					Object *obj = dst->get_validated_object_with_check(was_freed);
+					if (was_freed) {
+						err_text = "Cannot set property on a previously freed instance.";
+						OPCODE_BREAK;
+					}
+					if (obj) {
+						ClassDB::ClassInfo **cached_class_slot = reinterpret_cast<ClassDB::ClassInfo **>(&_code_ptr[ip + 4]);
+						ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 4 + _inline_cache_ptr_slots]);
+
+						ClassDB::ClassInfo *info = ClassDB::classes.getptr(obj->get_class_name());
+						ClassDB::PropertySetGet *psg = nullptr;
+
+						if (*cached_class_slot == info && *cached_psg_slot) {
+							psg = *cached_psg_slot;
+						} else {
+							ClassDB::ClassInfo *check = info;
+							while (check) {
+								psg = const_cast<ClassDB::PropertySetGet *>(check->property_setget.getptr(*index));
+								if (psg) {
+									*cached_class_slot = info;
+									*cached_psg_slot = psg;
+									break;
+								}
+								check = check->inherits_ptr;
+							}
+						}
+
+						if (psg) {
+							Callable::CallError ce;
+							if (psg->index >= 0) {
+								Variant idx = psg->index;
+								const Variant *arg[2] = { &idx, value };
+								if (psg->_setptr) {
+									psg->_setptr->call(obj, arg, 2, ce);
+								} else {
+									obj->callp(psg->setter, arg, 2, ce);
+								}
+							} else {
+								const Variant *arg[1] = { value };
+								if (psg->_setptr) {
+									psg->_setptr->call(obj, arg, 1, ce);
+								} else {
+									obj->callp(psg->setter, arg, 1, ce);
+								}
+							}
+							valid = ce.error == Callable::CallError::CALL_OK;
+							used_fast_path = true;
+						}
+					}
+				}
+
+				if (!used_fast_path) {
+					dst->set_named(*index, *value, valid);
+				}
+
+	#ifdef DEBUG_ENABLED
 				if (!valid) {
 					if (dst->is_read_only()) {
 						err_text = "Invalid assignment on read-only value (on base: '" + _get_var_type(dst) + "').";
@@ -1227,8 +1289,8 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					}
 					OPCODE_BREAK;
 				}
-#endif
-				ip += 4;
+	#endif
+				ip += 4 + (_inline_cache_ptr_slots * 2);
 			}
 			DISPATCH_OPCODE;
 
@@ -1248,7 +1310,8 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 			DISPATCH_OPCODE;
 
 			OPCODE(OPCODE_GET_NAMED) {
-				CHECK_SPACE(4);
+				constexpr int _cache_args = 4 + (_inline_cache_ptr_slots * 2);
+				CHECK_SPACE(_cache_args);
 
 				GET_VARIANT_PTR(src, 0);
 				GET_VARIANT_PTR(dst, 1);
@@ -1258,22 +1321,77 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 				GD_ERR_BREAK(indexname < 0 || indexname >= _global_names_count);
 				const StringName *index = &_global_names_ptr[indexname];
 
-				bool valid;
-#ifdef DEBUG_ENABLED
-				//allow better error message in cases where src and dst are the same stack position
-				Variant ret = src->get_named(*index, valid);
+				bool valid = false;
+				bool used_fast_path = false;
 
-#else
-				*dst = src->get_named(*index, valid);
-#endif
-#ifdef DEBUG_ENABLED
-				if (!valid) {
-					err_text = "Invalid access to property or key '" + index->operator String() + "' on a base object of type '" + _get_var_type(src) + "'.";
-					OPCODE_BREAK;
+				if (src->get_type() == Variant::OBJECT) {
+					bool was_freed = false;
+					Object *obj = src->get_validated_object_with_check(was_freed);
+					if (was_freed) {
+						err_text = "Cannot access property on a previously freed instance.";
+						OPCODE_BREAK;
+					}
+					if (obj) {
+						ClassDB::ClassInfo **cached_class_slot = reinterpret_cast<ClassDB::ClassInfo **>(&_code_ptr[ip + 4]);
+						ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 4 + _inline_cache_ptr_slots]);
+
+						ClassDB::ClassInfo *info = ClassDB::classes.getptr(obj->get_class_name());
+						ClassDB::PropertySetGet *psg = nullptr;
+
+						if (*cached_class_slot == info && *cached_psg_slot) {
+							psg = *cached_psg_slot;
+						} else {
+							ClassDB::ClassInfo *check = info;
+							while (check) {
+								psg = const_cast<ClassDB::PropertySetGet *>(check->property_setget.getptr(*index));
+								if (psg) {
+									*cached_class_slot = info;
+									*cached_psg_slot = psg;
+									break;
+								}
+								check = check->inherits_ptr;
+							}
+						}
+
+						if (psg) {
+							Callable::CallError ce;
+							Variant ret;
+							if (psg->index >= 0) {
+								Variant idx = psg->index;
+								const Variant *arg[1] = { &idx };
+								ret = obj->callp(psg->getter, arg, 1, ce);
+							} else {
+								if (psg->_getptr) {
+									ret = psg->_getptr->call(obj, nullptr, 0, ce);
+								} else {
+									ret = obj->callp(psg->getter, nullptr, 0, ce);
+								}
+							}
+							valid = ce.error == Callable::CallError::CALL_OK;
+							if (valid) {
+								*dst = ret;
+							}
+							used_fast_path = true;
+						}
+					}
 				}
-				*dst = ret;
-#endif
-				ip += 4;
+
+				if (!used_fast_path) {
+	#ifdef DEBUG_ENABLED
+					Variant ret = src->get_named(*index, valid);
+	#else
+					*dst = src->get_named(*index, valid);
+	#endif
+	#ifdef DEBUG_ENABLED
+					if (!valid) {
+						err_text = "Invalid access to property or key '" + index->operator String() + "' on a base object of type '" + _get_var_type(src) + "'.";
+						OPCODE_BREAK;
+					}
+					*dst = ret;
+	#endif
+				}
+
+				ip += 4 + (_inline_cache_ptr_slots * 2);
 			}
 			DISPATCH_OPCODE;
 
@@ -1293,45 +1411,162 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 			DISPATCH_OPCODE;
 
 			OPCODE(OPCODE_SET_MEMBER) {
-				CHECK_SPACE(3);
+				constexpr int _cache_args = 3 + (_inline_cache_ptr_slots * 2);
+				CHECK_SPACE(_cache_args);
 				GET_VARIANT_PTR(src, 0);
 				int indexname = _code_ptr[ip + 2];
 				GD_ERR_BREAK(indexname < 0 || indexname >= _global_names_count);
 				const StringName *index = &_global_names_ptr[indexname];
 
-				bool valid;
-#ifndef DEBUG_ENABLED
-				ClassDB::set_property(p_instance->owner, *index, *src, &valid);
-#else
-				bool ok = ClassDB::set_property(p_instance->owner, *index, *src, &valid);
-				if (!ok) {
-					err_text = "Internal error setting property: " + String(*index);
-					OPCODE_BREAK;
-				} else if (!valid) {
+				bool valid = false;
+				bool used_fast_path = false;
+
+				if (p_instance && p_instance->owner) {
+					Object *obj = p_instance->owner;
+					ClassDB::ClassInfo **cached_class_slot = reinterpret_cast<ClassDB::ClassInfo **>(&_code_ptr[ip + 3]);
+					ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 3 + _inline_cache_ptr_slots]);
+
+					ClassDB::ClassInfo *info = ClassDB::classes.getptr(obj->get_class_name());
+					ClassDB::PropertySetGet *psg = nullptr;
+
+					if (*cached_class_slot == info && *cached_psg_slot) {
+						psg = *cached_psg_slot;
+					} else {
+						ClassDB::ClassInfo *check = info;
+						while (check) {
+							psg = const_cast<ClassDB::PropertySetGet *>(check->property_setget.getptr(*index));
+							if (psg) {
+								*cached_class_slot = info;
+								*cached_psg_slot = psg;
+								break;
+							}
+							check = check->inherits_ptr;
+						}
+					}
+
+					if (psg) {
+						Callable::CallError ce;
+						if (psg->index >= 0) {
+							Variant idx = psg->index;
+							const Variant *arg[2] = { &idx, src };
+							if (psg->_setptr) {
+								psg->_setptr->call(obj, arg, 2, ce);
+							} else {
+								obj->callp(psg->setter, arg, 2, ce);
+							}
+						} else {
+							const Variant *arg[1] = { src };
+							if (psg->_setptr) {
+								psg->_setptr->call(obj, arg, 1, ce);
+							} else {
+								obj->callp(psg->setter, arg, 1, ce);
+							}
+						}
+						valid = ce.error == Callable::CallError::CALL_OK;
+						used_fast_path = true;
+					}
+				}
+
+				if (!used_fast_path) {
+	#ifndef DEBUG_ENABLED
+					ClassDB::set_property(p_instance->owner, *index, *src, &valid);
+	#else
+					bool ok = ClassDB::set_property(p_instance->owner, *index, *src, &valid);
+					if (!ok) {
+						err_text = "Internal error setting property: " + String(*index);
+						OPCODE_BREAK;
+					} else if (!valid) {
+						err_text = "Error setting property '" + String(*index) + "' with value of type " + Variant::get_type_name(src->get_type()) + ".";
+						OPCODE_BREAK;
+					}
+	#endif
+				}
+
+	#ifdef DEBUG_ENABLED
+				if (!valid) {
 					err_text = "Error setting property '" + String(*index) + "' with value of type " + Variant::get_type_name(src->get_type()) + ".";
 					OPCODE_BREAK;
 				}
-#endif
-				ip += 3;
+	#endif
+				ip += 3 + (_inline_cache_ptr_slots * 2);
 			}
 			DISPATCH_OPCODE;
 
 			OPCODE(OPCODE_GET_MEMBER) {
-				CHECK_SPACE(3);
+				constexpr int _cache_args = 3 + (_inline_cache_ptr_slots * 2);
+				CHECK_SPACE(_cache_args);
 				GET_VARIANT_PTR(dst, 0);
 				int indexname = _code_ptr[ip + 2];
 				GD_ERR_BREAK(indexname < 0 || indexname >= _global_names_count);
 				const StringName *index = &_global_names_ptr[indexname];
-#ifndef DEBUG_ENABLED
-				ClassDB::get_property(p_instance->owner, *index, *dst);
-#else
-				bool ok = ClassDB::get_property(p_instance->owner, *index, *dst);
-				if (!ok) {
-					err_text = "Internal error getting property: " + String(*index);
-					OPCODE_BREAK;
+
+				bool valid = false;
+				bool used_fast_path = false;
+
+				if (p_instance && p_instance->owner) {
+					Object *obj = p_instance->owner;
+					ClassDB::ClassInfo **cached_class_slot = reinterpret_cast<ClassDB::ClassInfo **>(&_code_ptr[ip + 3]);
+					ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 3 + _inline_cache_ptr_slots]);
+
+					ClassDB::ClassInfo *info = ClassDB::classes.getptr(obj->get_class_name());
+					ClassDB::PropertySetGet *psg = nullptr;
+
+					if (*cached_class_slot == info && *cached_psg_slot) {
+						psg = *cached_psg_slot;
+					} else {
+						ClassDB::ClassInfo *check = info;
+						while (check) {
+							psg = const_cast<ClassDB::PropertySetGet *>(check->property_setget.getptr(*index));
+							if (psg) {
+								*cached_class_slot = info;
+								*cached_psg_slot = psg;
+								break;
+							}
+							check = check->inherits_ptr;
+						}
+					}
+
+					if (psg) {
+						Callable::CallError ce;
+						Variant ret;
+						if (psg->index >= 0) {
+							Variant idx = psg->index;
+							const Variant *arg[1] = { &idx };
+							ret = obj->callp(psg->getter, arg, 1, ce);
+						} else {
+							if (psg->_getptr) {
+								ret = psg->_getptr->call(obj, nullptr, 0, ce);
+							} else {
+								ret = obj->callp(psg->getter, nullptr, 0, ce);
+							}
+						}
+						valid = ce.error == Callable::CallError::CALL_OK;
+						if (valid) {
+							*dst = ret;
+						}
+						used_fast_path = true;
+					}
 				}
-#endif
-				ip += 3;
+
+				if (!used_fast_path) {
+	#ifndef DEBUG_ENABLED
+					ClassDB::get_property(p_instance->owner, *index, *dst);
+	#else
+					bool ok = ClassDB::get_property(p_instance->owner, *index, *dst);
+					if (!ok) {
+						err_text = "Internal error getting property: " + String(*index);
+						OPCODE_BREAK;
+					}
+					valid = ok;
+	#endif
+				} else if (!valid) {
+	#ifdef DEBUG_ENABLED
+					err_text = "Error getting property '" + String(*index) + "'.";
+					OPCODE_BREAK;
+	#endif
+				}
+
+				ip += 3 + (_inline_cache_ptr_slots * 2);
 			}
 			DISPATCH_OPCODE;
 

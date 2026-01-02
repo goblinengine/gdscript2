@@ -859,6 +859,10 @@ void GDScriptByteCodeGenerator::write_set_named(const Address &p_target, const S
 	append(p_target);
 	append(p_source);
 	append(p_name);
+	constexpr int _ptr_slots = sizeof(void *) / sizeof(int);
+	for (int i = 0; i < _ptr_slots * 2; i++) {
+		append(0); // Inline cache placeholders: cached class pointer, cached PropertySetGet pointer.
+	}
 }
 
 void GDScriptByteCodeGenerator::write_get_named(const Address &p_target, const StringName &p_name, const Address &p_source) {
@@ -877,18 +881,30 @@ void GDScriptByteCodeGenerator::write_get_named(const Address &p_target, const S
 	append(p_source);
 	append(p_target);
 	append(p_name);
+	constexpr int _ptr_slots = sizeof(void *) / sizeof(int);
+	for (int i = 0; i < _ptr_slots * 2; i++) {
+		append(0); // Inline cache placeholders: cached class pointer, cached PropertySetGet pointer.
+	}
 }
 
 void GDScriptByteCodeGenerator::write_set_member(const Address &p_value, const StringName &p_name) {
 	append_opcode(GDScriptFunction::OPCODE_SET_MEMBER);
 	append(p_value);
 	append(p_name);
+	constexpr int _ptr_slots = sizeof(void *) / sizeof(int);
+	for (int i = 0; i < _ptr_slots * 2; i++) {
+		append(0); // Inline cache placeholders for self member access.
+	}
 }
 
 void GDScriptByteCodeGenerator::write_get_member(const Address &p_target, const StringName &p_name) {
 	append_opcode(GDScriptFunction::OPCODE_GET_MEMBER);
 	append(p_target);
 	append(p_name);
+	constexpr int _ptr_slots = sizeof(void *) / sizeof(int);
+	for (int i = 0; i < _ptr_slots * 2; i++) {
+		append(0); // Inline cache placeholders for self member access.
+	}
 }
 
 void GDScriptByteCodeGenerator::write_set_static_variable(const Address &p_value, const Address &p_class, int p_index) {
