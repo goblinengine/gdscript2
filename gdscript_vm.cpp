@@ -37,6 +37,9 @@
 #include "core/os/os.h"
 #include "core/profiling/profiling.h"
 
+static constexpr int _inline_cache_ptr_slots = sizeof(void *) / sizeof(int);
+static_assert(sizeof(void *) % sizeof(int) == 0, "Pointer size must be divisible by int size for inline caches.");
+
 #ifdef DEBUG_ENABLED
 
 static bool _profile_count_as_native(const Object *p_base_obj, const StringName &p_methodname) {
@@ -104,9 +107,6 @@ static String _get_var_type(const Variant *p_var) {
 
 	return basestr;
 }
-
-static constexpr int _inline_cache_ptr_slots = sizeof(void *) / sizeof(int);
-static_assert(sizeof(void *) % sizeof(int) == 0, "Pointer size must be divisible by int size for inline caches.");
 
 void GDScriptFunction::_profile_native_call(uint64_t p_t_taken, const String &p_func_name, const String &p_instance_class_name) {
 	HashMap<String, Profile::NativeProfile>::Iterator inner_prof = profile.native_calls.find(p_func_name);
