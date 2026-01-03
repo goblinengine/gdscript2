@@ -37,6 +37,7 @@
 
 static constexpr int _inline_cache_ptr_slots = sizeof(void *) / sizeof(int);
 static_assert(sizeof(void *) % sizeof(int) == 0, "Pointer size must be divisible by int size for inline caches.");
+static constexpr int _inline_cache_pic_size = 4;
 
 static String _get_variant_string(const Variant &p_variant) {
 	String txt;
@@ -311,7 +312,7 @@ void GDScriptFunction::disassemble(const Vector<String> &p_code_lines) const {
 				text += "\"] = ";
 				text += DADDR(2);
 
-				incr += 4 + (_inline_cache_ptr_slots * 2);
+				incr += 4 + (_inline_cache_ptr_slots * 2 * _inline_cache_pic_size);
 			} break;
 			case OPCODE_SET_NAMED_VALIDATED: {
 				text += "set_named validated ";
@@ -332,7 +333,7 @@ void GDScriptFunction::disassemble(const Vector<String> &p_code_lines) const {
 				text += _global_names_ptr[_code_ptr[ip + 3]];
 				text += "\"]";
 
-				incr += 4 + (_inline_cache_ptr_slots * 2);
+				incr += 4 + (_inline_cache_ptr_slots * 2 * _inline_cache_pic_size);
 			} break;
 			case OPCODE_GET_NAMED_VALIDATED: {
 				text += "get_named validated ";
@@ -352,7 +353,7 @@ void GDScriptFunction::disassemble(const Vector<String> &p_code_lines) const {
 				text += "\"] = ";
 				text += DADDR(1);
 
-				incr += 3 + (_inline_cache_ptr_slots * 2);
+				incr += 3 + (_inline_cache_ptr_slots * 2 * _inline_cache_pic_size);
 			} break;
 			case OPCODE_GET_MEMBER: {
 				text += "get_member ";
@@ -362,7 +363,7 @@ void GDScriptFunction::disassemble(const Vector<String> &p_code_lines) const {
 				text += _global_names_ptr[_code_ptr[ip + 2]];
 				text += "\"]";
 
-				incr += 3 + (_inline_cache_ptr_slots * 2);
+				incr += 3 + (_inline_cache_ptr_slots * 2 * _inline_cache_pic_size);
 			} break;
 			case OPCODE_SET_STATIC_VARIABLE: {
 				Ref<GDScript> gdscript;
@@ -711,7 +712,7 @@ void GDScriptFunction::disassemble(const Vector<String> &p_code_lines) const {
 				}
 				text += ")";
 
-				incr = 5 + argc;
+				incr = 5 + argc + (_inline_cache_ptr_slots * 2 * _inline_cache_pic_size);
 			} break;
 			case OPCODE_CALL_METHOD_BIND:
 			case OPCODE_CALL_METHOD_BIND_RET: {

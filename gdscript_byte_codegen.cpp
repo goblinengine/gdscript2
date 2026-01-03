@@ -860,8 +860,9 @@ void GDScriptByteCodeGenerator::write_set_named(const Address &p_target, const S
 	append(p_source);
 	append(p_name);
 	constexpr int _ptr_slots = sizeof(void *) / sizeof(int);
-	for (int i = 0; i < _ptr_slots * 2; i++) {
-		append(0); // Inline cache placeholders: cached class pointer, cached PropertySetGet pointer.
+	constexpr int _pic_size = 4;
+	for (int i = 0; i < _ptr_slots * 2 * _pic_size; i++) {
+		append(0); // Inline cache placeholders: cached class pointer, cached PropertySetGet pointer (PIC entries).
 	}
 }
 
@@ -882,8 +883,9 @@ void GDScriptByteCodeGenerator::write_get_named(const Address &p_target, const S
 	append(p_target);
 	append(p_name);
 	constexpr int _ptr_slots = sizeof(void *) / sizeof(int);
-	for (int i = 0; i < _ptr_slots * 2; i++) {
-		append(0); // Inline cache placeholders: cached class pointer, cached PropertySetGet pointer.
+	constexpr int _pic_size = 4;
+	for (int i = 0; i < _ptr_slots * 2 * _pic_size; i++) {
+		append(0); // Inline cache placeholders: cached class pointer, cached PropertySetGet pointer (PIC entries).
 	}
 }
 
@@ -892,8 +894,9 @@ void GDScriptByteCodeGenerator::write_set_member(const Address &p_value, const S
 	append(p_value);
 	append(p_name);
 	constexpr int _ptr_slots = sizeof(void *) / sizeof(int);
-	for (int i = 0; i < _ptr_slots * 2; i++) {
-		append(0); // Inline cache placeholders for self member access.
+	constexpr int _pic_size = 4;
+	for (int i = 0; i < _ptr_slots * 2 * _pic_size; i++) {
+		append(0); // Inline cache placeholders for self member access (PIC entries).
 	}
 }
 
@@ -902,8 +905,9 @@ void GDScriptByteCodeGenerator::write_get_member(const Address &p_target, const 
 	append(p_target);
 	append(p_name);
 	constexpr int _ptr_slots = sizeof(void *) / sizeof(int);
-	for (int i = 0; i < _ptr_slots * 2; i++) {
-		append(0); // Inline cache placeholders for self member access.
+	constexpr int _pic_size = 4;
+	for (int i = 0; i < _ptr_slots * 2 * _pic_size; i++) {
+		append(0); // Inline cache placeholders for self member access (PIC entries).
 	}
 }
 
@@ -1106,6 +1110,11 @@ void GDScriptByteCodeGenerator::write_call(const Address &p_target, const Addres
 	append(ct.target);
 	append(p_arguments.size());
 	append(p_function_name);
+	constexpr int _ptr_slots = sizeof(void *) / sizeof(int);
+	constexpr int _pic_size = 4;
+	for (int i = 0; i < _ptr_slots * 2 * _pic_size; i++) {
+		append(0); // Inline cache placeholders for method call PIC.
+	}
 	ct.cleanup();
 }
 
@@ -1131,6 +1140,11 @@ void GDScriptByteCodeGenerator::write_call_async(const Address &p_target, const 
 	append(ct.target);
 	append(p_arguments.size());
 	append(p_function_name);
+	constexpr int _ptr_slots = sizeof(void *) / sizeof(int);
+	constexpr int _pic_size = 4;
+	for (int i = 0; i < _ptr_slots * 2 * _pic_size; i++) {
+		append(0); // Inline cache placeholders for method call PIC.
+	}
 	ct.cleanup();
 }
 
@@ -1365,6 +1379,11 @@ void GDScriptByteCodeGenerator::write_call_self(const Address &p_target, const S
 	append(ct.target);
 	append(p_arguments.size());
 	append(p_function_name);
+	constexpr int _ptr_slots = sizeof(void *) / sizeof(int);
+	constexpr int _pic_size = 4;
+	for (int i = 0; i < _ptr_slots * 2 * _pic_size; i++) {
+		append(0); // Inline cache placeholders for method call PIC.
+	}
 	ct.cleanup();
 }
 
@@ -1378,6 +1397,11 @@ void GDScriptByteCodeGenerator::write_call_self_async(const Address &p_target, c
 	append(ct.target);
 	append(p_arguments.size());
 	append(p_function_name);
+	constexpr int _ptr_slots = sizeof(void *) / sizeof(int);
+	constexpr int _pic_size = 4;
+	for (int i = 0; i < _ptr_slots * 2 * _pic_size; i++) {
+		append(0); // Inline cache placeholders for method call PIC.
+	}
 	ct.cleanup();
 }
 
@@ -1391,6 +1415,11 @@ void GDScriptByteCodeGenerator::write_call_script_function(const Address &p_targ
 	append(ct.target);
 	append(p_arguments.size());
 	append(p_function_name);
+	constexpr int _ptr_slots = sizeof(void *) / sizeof(int);
+	constexpr int _pic_size = 4;
+	for (int i = 0; i < _ptr_slots * 2 * _pic_size; i++) {
+		append(0); // Inline cache placeholders for method call PIC.
+	}
 	ct.cleanup();
 }
 
