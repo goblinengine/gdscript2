@@ -6398,6 +6398,8 @@ bool GDScriptAnalyzer::check_type_compatibility(const GDScriptParser::DataType &
 		case GDScriptParser::DataType::RESOLVING:
 		case GDScriptParser::DataType::UNRESOLVED:
 			break; // Already solved before.
+		case GDScriptParser::DataType::UNION:
+			return false; // Union handled before this switch.
 	}
 
 	switch (p_target.kind) {
@@ -6435,6 +6437,8 @@ bool GDScriptAnalyzer::check_type_compatibility(const GDScriptParser::DataType &
 		case GDScriptParser::DataType::RESOLVING:
 		case GDScriptParser::DataType::UNRESOLVED:
 			break; // Already solved before.
+		case GDScriptParser::DataType::UNION:
+			return false; // Union handled before this switch.
 	}
 
 	return false;

@@ -144,14 +144,37 @@ public:
 		_FORCE_INLINE_ bool is_resolving() const { return kind == RESOLVING; }
 		_FORCE_INLINE_ bool has_no_type() const { return type_source == UNDETECTED; }
 		_FORCE_INLINE_ bool is_variant() const {
-			if (kind == UNION) {
-				for (int i = 0; i < union_types.size(); i++) {
-					if (union_types[i].is_variant()) {
-						return true;
+			if (kind == VARIANT || kind == RESOLVING || kind == UNRESOLVED) {
+				return true;
+			}
+			if (kind != UNION) {
+				return false;
+			}
+
+			Vector<const DataType *> pending;
+			pending.resize(union_types.size());
+			for (int i = 0; i < union_types.size(); i++) {
+				pending.write[i] = &union_types[i];
+			}
+
+			while (!pending.is_empty()) {
+				const int last = pending.size() - 1;
+				const DataType *current = pending[last];
+				pending.resize(last);
+
+				if (current->kind == VARIANT || current->kind == RESOLVING || current->kind == UNRESOLVED) {
+					return true;
+				}
+				if (current->kind == UNION) {
+					const int old_size = pending.size();
+					pending.resize(old_size + current->union_types.size());
+					for (int j = 0; j < current->union_types.size(); j++) {
+						pending.write[old_size + j] = &current->union_types[j];
 					}
 				}
 			}
-			return kind == VARIANT || kind == RESOLVING || kind == UNRESOLVED;
+
+			return false;
 		}
 		_FORCE_INLINE_ bool is_hard_type() const { return type_source > INFERRED; }
 		_FORCE_INLINE_ bool is_union() const { return !union_types.is_empty(); }
@@ -268,6 +291,8 @@ public:
 					return script_type == p_other.script_type;
 				case CLASS:
 					return class_type == p_other.class_type || class_type->fqcn == p_other.class_type->fqcn;
+				case UNION:
+					return false; // Union types are compared before reaching this branch.
 				case RESOLVING:
 				case UNRESOLVED:
 					break;
