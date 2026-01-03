@@ -1019,6 +1019,19 @@ void GDScriptByteCodeGenerator::write_assign(const Address &p_target, const Addr
 	}
 }
 
+void GDScriptByteCodeGenerator::write_add_sub_assign(const Address &p_target, const Address &p_source, Variant::Operator p_op) {
+	ERR_FAIL_COND_MSG(!(p_target.type.kind == GDScriptDataType::BUILTIN && p_source.type.kind == GDScriptDataType::BUILTIN), "Fused add/sub assign requires builtin types.");
+	GDScriptFunction::Opcode op = GDScriptFunction::OPCODE_ADD_ASSIGN_INT;
+	if (p_target.type.builtin_type == Variant::FLOAT && p_source.type.builtin_type == Variant::FLOAT) {
+		op = (p_op == Variant::OP_SUBTRACT) ? GDScriptFunction::OPCODE_SUB_ASSIGN_FLOAT : GDScriptFunction::OPCODE_ADD_ASSIGN_FLOAT;
+	} else {
+		op = (p_op == Variant::OP_SUBTRACT) ? GDScriptFunction::OPCODE_SUB_ASSIGN_INT : GDScriptFunction::OPCODE_ADD_ASSIGN_INT;
+	}
+	append_opcode(op);
+	append(p_target);
+	append(p_source);
+}
+
 void GDScriptByteCodeGenerator::write_assign_null(const Address &p_target) {
 	append_opcode(GDScriptFunction::OPCODE_ASSIGN_NULL);
 	append(p_target);
@@ -1661,6 +1674,11 @@ void GDScriptByteCodeGenerator::write_for(const Address &p_variable, bool p_use_
 	if (p_is_range) {
 		begin_opcode = GDScriptFunction::OPCODE_ITERATE_BEGIN_RANGE;
 		iterate_opcode = GDScriptFunction::OPCODE_ITERATE_RANGE;
+		if (range_from.type.kind == GDScriptDataType::BUILTIN && range_from.type.builtin_type == Variant::INT &&
+				range_to.type.kind == GDScriptDataType::BUILTIN && range_to.type.builtin_type == Variant::INT &&
+				range_step.type.kind == GDScriptDataType::BUILTIN && range_step.type.builtin_type == Variant::INT) {
+			iterate_opcode = GDScriptFunction::OPCODE_ITERATE_RANGE_FAST;
+		}
 	} else if (container.type.has_type()) {
 		if (container.type.kind == GDScriptDataType::BUILTIN) {
 			switch (container.type.builtin_type) {

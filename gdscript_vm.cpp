@@ -286,6 +286,10 @@ void (*type_init_function_table[])(Variant *) = {
 		&&OPCODE_ASSIGN_TYPED_DICTIONARY,                \
 		&&OPCODE_ASSIGN_TYPED_NATIVE,                    \
 		&&OPCODE_ASSIGN_TYPED_SCRIPT,                    \
+		&&OPCODE_ADD_ASSIGN_INT,                         \
+		&&OPCODE_ADD_ASSIGN_FLOAT,                       \
+		&&OPCODE_SUB_ASSIGN_INT,                         \
+		&&OPCODE_SUB_ASSIGN_FLOAT,                       \
 		&&OPCODE_CAST_TO_BUILTIN,                        \
 		&&OPCODE_CAST_TO_NATIVE,                         \
 		&&OPCODE_CAST_TO_SCRIPT,                         \
@@ -350,6 +354,7 @@ void (*type_init_function_table[])(Variant *) = {
 		&&OPCODE_ITERATE_BEGIN_RANGE,                    \
 		&&OPCODE_ITERATE,                                \
 		&&OPCODE_ITERATE_INT,                            \
+		&&OPCODE_ITERATE_RANGE_FAST,                     \
 		&&OPCODE_ITERATE_FLOAT,                          \
 		&&OPCODE_ITERATE_VECTOR2,                        \
 		&&OPCODE_ITERATE_VECTOR2I,                       \
@@ -1877,6 +1882,62 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 				*dst = *src;
 
 				ip += 4;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_ADD_ASSIGN_INT) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(dst, 0);
+				GET_VARIANT_PTR(src, 1);
+
+				int64_t lhs = *VariantInternal::get_int(dst);
+				int64_t rhs = *VariantInternal::get_int(src);
+				*VariantInternal::get_int(dst) = lhs + rhs;
+
+				ip += 3;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_ADD_ASSIGN_FLOAT) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(dst, 0);
+				GET_VARIANT_PTR(src, 1);
+
+				double lhs = *VariantInternal::get_float(dst);
+				double rhs = *VariantInternal::get_float(src);
+				*VariantInternal::get_float(dst) = lhs + rhs;
+
+				ip += 3;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_SUB_ASSIGN_INT) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(dst, 0);
+				GET_VARIANT_PTR(src, 1);
+
+				int64_t lhs = *VariantInternal::get_int(dst);
+				int64_t rhs = *VariantInternal::get_int(src);
+				*VariantInternal::get_int(dst) = lhs - rhs;
+
+				ip += 3;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_SUB_ASSIGN_FLOAT) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(dst, 0);
+				GET_VARIANT_PTR(src, 1);
+
+				double lhs = *VariantInternal::get_float(dst);
+				double rhs = *VariantInternal::get_float(src);
+				*VariantInternal::get_float(dst) = lhs - rhs;
+
+				ip += 3;
 			}
 			DISPATCH_OPCODE;
 
@@ -4162,6 +4223,34 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 				*count += step;
 
 				if ((step < 0 && *count <= to) || (step > 0 && *count >= to)) {
+					int jumpto = _code_ptr[ip + 5];
+					GD_ERR_BREAK(jumpto < 0 || jumpto > _code_size);
+					ip = jumpto;
+				} else {
+					GET_VARIANT_PTR(iterator, 3);
+					*VariantInternal::get_int(iterator) = *count;
+
+					ip += 6; // Loop again.
+				}
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_ITERATE_RANGE_FAST) {
+				CHECK_SPACE(5);
+
+				GET_VARIANT_PTR(counter, 0);
+				GET_VARIANT_PTR(to_ptr, 1);
+				GET_VARIANT_PTR(step_ptr, 2);
+
+				int64_t to = *VariantInternal::get_int(to_ptr);
+				int64_t step = *VariantInternal::get_int(step_ptr);
+				int64_t *count = VariantInternal::get_int(counter);
+
+				// Fast path: integers only, no booleanize or Variant conversions.
+				*count += step;
+
+				bool done = (step < 0) ? (*count <= to) : (*count >= to);
+				if (done) {
 					int jumpto = _code_ptr[ip + 5];
 					GD_ERR_BREAK(jumpto < 0 || jumpto > _code_size);
 					ip = jumpto;

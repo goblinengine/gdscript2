@@ -509,6 +509,7 @@ public:
 	virtual void write_assign_null(const Address &p_target) override;
 	virtual void write_assign_true(const Address &p_target) override;
 	virtual void write_assign_false(const Address &p_target) override;
+	void write_add_sub_assign(const Address &p_target, const Address &p_source, Variant::Operator p_op);
 	virtual void write_assign_default_parameter(const Address &p_dst, const Address &p_src, bool p_use_conversion) override;
 	virtual void write_store_global(const Address &p_dst, int p_global_index) override;
 	virtual void write_store_named_global(const Address &p_dst, const StringName &p_global) override;

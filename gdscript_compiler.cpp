@@ -1385,6 +1385,19 @@ GDScriptCodeGenerator::Address GDScriptCompiler::_parse_expression(CodeGen &code
 
 				GDScriptCodeGenerator::Address to_assign;
 				bool has_operation = assignment->operation != GDScriptParser::AssignmentNode::OP_NONE;
+				bool fused_op = false;
+				bool skip_final_assign = false;
+				if (has_operation && !is_member && !has_setter && !is_static &&
+						target.type.kind == GDScriptDataType::BUILTIN && assigned_value.type.kind == GDScriptDataType::BUILTIN &&
+						target.type.builtin_type == assigned_value.type.builtin_type &&
+						(target.type.builtin_type == Variant::INT || target.type.builtin_type == Variant::FLOAT) &&
+						(assignment->variant_op == Variant::OP_ADD || assignment->variant_op == Variant::OP_SUBTRACT)) {
+					codegen.generator->write_add_sub_assign(target, assigned_value, assignment->variant_op);
+					fused_op = true;
+					has_operation = false; // result already written into target.
+					to_assign = target;
+					skip_final_assign = true;
+				}
 				if (has_operation) {
 					// Perform operation.
 					GDScriptCodeGenerator::Address op_result = codegen.add_temporary(_gdtype_from_datatype(assignment->get_datatype(), codegen.script));
@@ -1396,7 +1409,9 @@ GDScriptCodeGenerator::Address GDScriptCompiler::_parse_expression(CodeGen &code
 						gen->pop_temporary();
 					}
 				} else {
-					to_assign = assigned_value;
+					if (!fused_op) {
+						to_assign = assigned_value;
+					}
 				}
 
 				if (has_setter && !is_in_setter) {
@@ -1414,7 +1429,7 @@ GDScriptCodeGenerator::Address GDScriptCompiler::_parse_expression(CodeGen &code
 					}
 					gen->write_set_static_variable(temp, static_var_class, static_var_index);
 					gen->pop_temporary();
-				} else {
+				} else if (!skip_final_assign) {
 					// Just assign.
 					if (assignment->use_conversion_assign) {
 						gen->write_assign_with_conversion(target, to_assign);
@@ -1426,7 +1441,7 @@ GDScriptCodeGenerator::Address GDScriptCompiler::_parse_expression(CodeGen &code
 				if (to_assign.mode == GDScriptCodeGenerator::Address::TEMPORARY) {
 					gen->pop_temporary(); // Pop assigned value or temp operation result.
 				}
-				if (has_operation && assigned_value.mode == GDScriptCodeGenerator::Address::TEMPORARY) {
+				if ((has_operation || fused_op) && assigned_value.mode == GDScriptCodeGenerator::Address::TEMPORARY) {
 					gen->pop_temporary(); // Pop assigned value if not done before.
 				}
 				if (target.mode == GDScriptCodeGenerator::Address::TEMPORARY) {
