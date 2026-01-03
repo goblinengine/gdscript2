@@ -173,6 +173,7 @@ void GDScriptByteCodeGenerator::write_start(GDScript *p_script, const StringName
 	function->return_type = p_return_type;
 	function->rpc_config = p_rpc_config;
 	function->_argument_count = 0;
+	native_operator_hints.clear();
 }
 
 GDScriptFunction *GDScriptByteCodeGenerator::write_end() {
@@ -408,6 +409,9 @@ GDScriptFunction *GDScriptByteCodeGenerator::write_end() {
 	function->gds_utilities_names = gds_utilities_names;
 #endif
 
+	function->native_operator_hints = native_operator_hints;
+	function->prepare_native_jit();
+
 	ended = true;
 	return function;
 }
@@ -556,6 +560,7 @@ void GDScriptByteCodeGenerator::write_unary_operator(const Address &p_target, Va
 		// Gather specific operator.
 		Variant::ValidatedOperatorEvaluator op_func = Variant::get_validated_operator_evaluator(p_operator, p_left_operand.type.builtin_type, Variant::NIL);
 
+		int op_ip = opcodes.size();
 		append_opcode(GDScriptFunction::OPCODE_OPERATOR_VALIDATED);
 		append(p_left_operand);
 		append(Address());
@@ -564,6 +569,13 @@ void GDScriptByteCodeGenerator::write_unary_operator(const Address &p_target, Va
 #ifdef DEBUG_ENABLED
 		add_debug_name(operator_names, get_operation_pos(op_func), Variant::get_operator_name(p_operator));
 #endif
+		if (GDScriptFunction::is_math_operator(p_operator)) {
+			GDScriptFunction::NativeOperatorHint hint;
+			hint.ip = op_ip;
+			hint.op = p_operator;
+			hint.unary = true;
+			native_operator_hints.push_back(hint);
+		}
 		return;
 	}
 
@@ -613,6 +625,7 @@ void GDScriptByteCodeGenerator::write_binary_operator(const Address &p_target, V
 		// Gather specific operator.
 		Variant::ValidatedOperatorEvaluator op_func = Variant::get_validated_operator_evaluator(p_operator, p_left_operand.type.builtin_type, p_right_operand.type.builtin_type);
 
+		int op_ip = opcodes.size();
 		append_opcode(GDScriptFunction::OPCODE_OPERATOR_VALIDATED);
 		append(p_left_operand);
 		append(p_right_operand);
@@ -621,6 +634,13 @@ void GDScriptByteCodeGenerator::write_binary_operator(const Address &p_target, V
 #ifdef DEBUG_ENABLED
 		add_debug_name(operator_names, get_operation_pos(op_func), Variant::get_operator_name(p_operator));
 #endif
+		if (GDScriptFunction::is_math_operator(p_operator)) {
+			GDScriptFunction::NativeOperatorHint hint;
+			hint.ip = op_ip;
+			hint.op = p_operator;
+			hint.unary = false;
+			native_operator_hints.push_back(hint);
+		}
 		return;
 	}
 

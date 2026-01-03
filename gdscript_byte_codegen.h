@@ -91,6 +91,7 @@ class GDScriptByteCodeGenerator : public GDScriptCodeGenerator {
 	List<int> used_temporaries;
 	HashSet<int> temporaries_pending_clear;
 	RBMap<Variant::Type, List<int>> temporaries_pool;
+	Vector<GDScriptFunction::NativeOperatorHint> native_operator_hints;
 
 	List<GDScriptFunction::StackDebug> stack_debug;
 	List<RBMap<StringName, int>> block_identifier_stack;

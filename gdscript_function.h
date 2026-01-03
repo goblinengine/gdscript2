@@ -450,6 +450,29 @@ public:
 		StringName identifier;
 	};
 
+	struct NativeOperatorHint {
+		int ip = 0;
+		Variant::Operator op = Variant::OP_MAX;
+		bool unary = false;
+	};
+
+	struct NativeOperatorStep {
+		uint8_t a_type = 0;
+		uint8_t b_type = 0;
+		uint8_t dst_type = 0;
+		uint32_t a_index = 0;
+		uint32_t b_index = 0;
+		uint32_t dst_index = 0;
+		bool unary = false;
+		Variant::ValidatedOperatorEvaluator evaluator = nullptr;
+	};
+
+	struct NativeOperatorSegment {
+		int start_ip = 0;
+		int end_ip = 0;
+		Vector<NativeOperatorStep> steps;
+	};
+
 private:
 	friend class GDScript;
 	friend class GDScriptCompiler;
@@ -530,6 +553,12 @@ private:
 	MethodBind **_methods_ptr = nullptr;
 	GDScriptFunction **_lambdas_ptr = nullptr;
 
+	Vector<NativeOperatorHint> native_operator_hints;
+	Vector<NativeOperatorSegment> native_operator_segments;
+	HashMap<int, int> native_segment_lookup;
+	Vector<int> native_segment_index_by_ip;
+	bool native_segments_ready = false;
+
 #ifdef DEBUG_ENABLED
 	CharString func_cname;
 	const char *_func_cname = nullptr;
@@ -566,9 +595,24 @@ private:
 	String _get_call_error(const String &p_where, const Variant **p_argptrs, int p_argcount, const Variant &p_ret, const Callable::CallError &p_err) const;
 	String _get_callable_call_error(const String &p_where, const Callable &p_callable, const Variant **p_argptrs, int p_argcount, const Variant &p_ret, const Callable::CallError &p_err) const;
 	Variant _get_default_variant_for_data_type(const GDScriptDataType &p_data_type);
+	void prepare_native_jit();
+	_FORCE_INLINE_ const NativeOperatorSegment *get_native_segment(int p_ip) const {
+		if (native_segment_index_by_ip.is_empty()) {
+			return nullptr;
+		}
+		if (p_ip < 0 || p_ip >= native_segment_index_by_ip.size()) {
+			return nullptr;
+		}
+		int idx = native_segment_index_by_ip[p_ip];
+		if (idx < 0 || idx >= native_operator_segments.size()) {
+			return nullptr;
+		}
+		return &native_operator_segments[idx];
+	}
 
 public:
 	static constexpr int MAX_CALL_DEPTH = 2048; // Limit to try to avoid crash because of a stack overflow.
+	static bool is_math_operator(Variant::Operator p_operator);
 
 	struct CallState {
 		Signal completed;

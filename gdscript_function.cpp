@@ -37,6 +37,100 @@ Variant GDScriptFunction::get_constant(int p_idx) const {
 	return constants[p_idx];
 }
 
+bool GDScriptFunction::is_math_operator(Variant::Operator p_operator) {
+	switch (p_operator) {
+		case Variant::OP_ADD:
+		case Variant::OP_SUBTRACT:
+		case Variant::OP_MULTIPLY:
+		case Variant::OP_DIVIDE:
+		case Variant::OP_NEGATE:
+		case Variant::OP_MODULE:
+		case Variant::OP_POWER:
+			return true;
+		default:
+			return false;
+	}
+}
+
+void GDScriptFunction::prepare_native_jit() {
+	native_operator_segments.clear();
+	native_segment_lookup.clear();
+	native_segment_index_by_ip.clear();
+	native_segments_ready = false;
+
+	if (native_operator_hints.is_empty() || !_code_ptr || _operator_funcs_count == 0) {
+		native_segments_ready = true;
+		return;
+	}
+
+	NativeOperatorSegment current_segment;
+	for (const NativeOperatorHint &hint : native_operator_hints) {
+		if (!is_math_operator(hint.op)) {
+			continue;
+		}
+
+		if (_code_ptr[hint.ip] != OPCODE_OPERATOR_VALIDATED) {
+			continue;
+		}
+
+		int operator_func_index = _code_ptr[hint.ip + 4];
+		if (operator_func_index < 0 || operator_func_index >= _operator_funcs_count) {
+			continue;
+		}
+
+		NativeOperatorStep step;
+		int a_address = _code_ptr[hint.ip + 1];
+		int b_address = _code_ptr[hint.ip + 2];
+		int dst_address = _code_ptr[hint.ip + 3];
+		step.a_type = (uint8_t)((a_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		step.b_type = (uint8_t)((b_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		step.dst_type = (uint8_t)((dst_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		step.a_index = (uint32_t)(a_address & ADDR_MASK);
+		step.b_index = (uint32_t)(b_address & ADDR_MASK);
+		step.dst_index = (uint32_t)(dst_address & ADDR_MASK);
+		step.evaluator = _operator_funcs_ptr[operator_func_index];
+		step.unary = hint.unary;
+
+		// Group consecutive validated math operators into a single native segment.
+		if (current_segment.steps.is_empty()) {
+			current_segment.start_ip = hint.ip;
+			current_segment.end_ip = hint.ip + 5;
+			current_segment.steps.push_back(step);
+			continue;
+		}
+
+		if (hint.ip == current_segment.end_ip) {
+			current_segment.steps.push_back(step);
+			current_segment.end_ip = hint.ip + 5;
+		} else {
+			native_segment_lookup.insert(current_segment.start_ip, native_operator_segments.size());
+			native_operator_segments.push_back(current_segment);
+			current_segment = NativeOperatorSegment();
+			current_segment.start_ip = hint.ip;
+			current_segment.end_ip = hint.ip + 5;
+			current_segment.steps.push_back(step);
+		}
+	}
+
+	if (!current_segment.steps.is_empty()) {
+		native_segment_lookup.insert(current_segment.start_ip, native_operator_segments.size());
+		native_operator_segments.push_back(current_segment);
+	}
+
+	if (_code_size > 0) {
+		native_segment_index_by_ip.resize(_code_size);
+		native_segment_index_by_ip.fill(-1);
+		for (int i = 0; i < native_operator_segments.size(); i++) {
+			const NativeOperatorSegment &seg = native_operator_segments[i];
+			if (seg.start_ip >= 0 && seg.start_ip < native_segment_index_by_ip.size()) {
+				native_segment_index_by_ip.write[seg.start_ip] = i;
+			}
+		}
+	}
+
+	native_segments_ready = true;
+}
+
 StringName GDScriptFunction::get_global_name(int p_idx) const {
 	ERR_FAIL_INDEX_V(p_idx, global_names.size(), "<errgname>");
 	return global_names[p_idx];

@@ -509,6 +509,10 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 		return _get_default_variant_for_data_type(return_type);
 	}
 
+	if (!native_segments_ready) {
+		prepare_native_jit();
+	}
+
 	r_err.error = Callable::CallError::CALL_OK;
 
 	static thread_local int call_depth = 0;
@@ -744,6 +748,33 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 
 	bool awaited = false;
 	Variant *variant_addresses[ADDR_TYPE_MAX] = { stack, _constants_ptr, p_instance ? p_instance->members.ptrw() : nullptr };
+	const bool has_native_segments = native_segments_ready && !native_operator_segments.is_empty();
+
+#ifdef DEBUG_ENABLED
+		auto resolve_variant_address = [&](uint8_t p_type, uint32_t p_index) -> Variant * {
+			if (unlikely(p_type >= ADDR_TYPE_MAX)) {
+				err_text = "Bad address type.";
+				return nullptr;
+			}
+			if (unlikely((int)p_index >= variant_address_limits[p_type])) {
+				if (p_type == ADDR_TYPE_MEMBER && !p_instance) {
+					err_text = "Cannot access member without instance.";
+				} else {
+					err_text = "Bad address index.";
+				}
+				return nullptr;
+			}
+			Variant *base = variant_addresses[p_type];
+			if (unlikely(!base)) {
+				return nullptr;
+			}
+			return &base[p_index];
+		};
+#else
+	auto resolve_variant_address = [&](uint8_t p_type, uint32_t p_index) -> Variant * {
+		return &variant_addresses[p_type][p_index];
+	};
+#endif
 
 #ifdef DEBUG_ENABLED
 	OPCODE_WHILE(ip < _code_size) {
@@ -751,6 +782,40 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 #else
 	OPCODE_WHILE(true) {
 #endif
+
+		if (has_native_segments) {
+			const NativeOperatorSegment *native_segment = get_native_segment(ip);
+			if (native_segment) {
+#ifdef DEBUG_ENABLED
+				last_opcode = GDScriptFunction::OPCODE_OPERATOR_VALIDATED;
+#endif
+#ifdef DEBUG_ENABLED
+				for (const NativeOperatorStep &native_step : native_segment->steps) {
+					Variant *a = resolve_variant_address(native_step.a_type, native_step.a_index);
+					Variant *b = native_step.unary ? a : resolve_variant_address(native_step.b_type, native_step.b_index);
+					Variant *dst = resolve_variant_address(native_step.dst_type, native_step.dst_index);
+					if (unlikely(!native_step.evaluator || !a || !b || !dst)) {
+#ifdef DEBUG_ENABLED
+						if (err_text.is_empty()) {
+							err_text = "Invalid native operator segment address.";
+						}
+#endif
+					OPCODE_BREAK;
+					}
+					native_step.evaluator(a, b, dst);
+				}
+#else
+				for (const NativeOperatorStep &native_step : native_segment->steps) {
+					Variant *a = &variant_addresses[native_step.a_type][native_step.a_index];
+					Variant *b = native_step.unary ? a : &variant_addresses[native_step.b_type][native_step.b_index];
+					Variant *dst = &variant_addresses[native_step.dst_type][native_step.dst_index];
+					native_step.evaluator(a, b, dst);
+				}
+#endif
+				ip = native_segment->end_ip;
+				continue;
+			}
+		}
 
 		OPCODE_SWITCH(_code_ptr[ip]) {
 			OPCODE(OPCODE_OPERATOR) {
