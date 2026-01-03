@@ -776,6 +776,51 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 	};
 #endif
 
+	auto adjust_variant_type = [&](Variant *p_dst, Variant::Type p_type) {
+		switch (p_type) {
+			case Variant::BOOL: VariantTypeAdjust<bool>::adjust(p_dst); break;
+			case Variant::INT: VariantTypeAdjust<int64_t>::adjust(p_dst); break;
+			case Variant::FLOAT: VariantTypeAdjust<double>::adjust(p_dst); break;
+			case Variant::STRING: VariantTypeAdjust<String>::adjust(p_dst); break;
+			case Variant::VECTOR2: VariantTypeAdjust<Vector2>::adjust(p_dst); break;
+			case Variant::VECTOR2I: VariantTypeAdjust<Vector2i>::adjust(p_dst); break;
+			case Variant::RECT2: VariantTypeAdjust<Rect2>::adjust(p_dst); break;
+			case Variant::RECT2I: VariantTypeAdjust<Rect2i>::adjust(p_dst); break;
+			case Variant::VECTOR3: VariantTypeAdjust<Vector3>::adjust(p_dst); break;
+			case Variant::VECTOR3I: VariantTypeAdjust<Vector3i>::adjust(p_dst); break;
+			case Variant::TRANSFORM2D: VariantTypeAdjust<Transform2D>::adjust(p_dst); break;
+			case Variant::VECTOR4: VariantTypeAdjust<Vector4>::adjust(p_dst); break;
+			case Variant::VECTOR4I: VariantTypeAdjust<Vector4i>::adjust(p_dst); break;
+			case Variant::PLANE: VariantTypeAdjust<Plane>::adjust(p_dst); break;
+			case Variant::QUATERNION: VariantTypeAdjust<Quaternion>::adjust(p_dst); break;
+			case Variant::AABB: VariantTypeAdjust<AABB>::adjust(p_dst); break;
+			case Variant::BASIS: VariantTypeAdjust<Basis>::adjust(p_dst); break;
+			case Variant::TRANSFORM3D: VariantTypeAdjust<Transform3D>::adjust(p_dst); break;
+			case Variant::PROJECTION: VariantTypeAdjust<Projection>::adjust(p_dst); break;
+			case Variant::COLOR: VariantTypeAdjust<Color>::adjust(p_dst); break;
+			case Variant::STRING_NAME: VariantTypeAdjust<StringName>::adjust(p_dst); break;
+			case Variant::NODE_PATH: VariantTypeAdjust<NodePath>::adjust(p_dst); break;
+			case Variant::RID: VariantTypeAdjust<RID>::adjust(p_dst); break;
+			case Variant::OBJECT: VariantTypeAdjust<Object *>::adjust(p_dst); break;
+			case Variant::CALLABLE: VariantTypeAdjust<Callable>::adjust(p_dst); break;
+			case Variant::SIGNAL: VariantTypeAdjust<Signal>::adjust(p_dst); break;
+			case Variant::DICTIONARY: VariantTypeAdjust<Dictionary>::adjust(p_dst); break;
+			case Variant::ARRAY: VariantTypeAdjust<Array>::adjust(p_dst); break;
+			case Variant::PACKED_BYTE_ARRAY: VariantTypeAdjust<PackedByteArray>::adjust(p_dst); break;
+			case Variant::PACKED_INT32_ARRAY: VariantTypeAdjust<PackedInt32Array>::adjust(p_dst); break;
+			case Variant::PACKED_INT64_ARRAY: VariantTypeAdjust<PackedInt64Array>::adjust(p_dst); break;
+			case Variant::PACKED_FLOAT32_ARRAY: VariantTypeAdjust<PackedFloat32Array>::adjust(p_dst); break;
+			case Variant::PACKED_FLOAT64_ARRAY: VariantTypeAdjust<PackedFloat64Array>::adjust(p_dst); break;
+			case Variant::PACKED_STRING_ARRAY: VariantTypeAdjust<PackedStringArray>::adjust(p_dst); break;
+			case Variant::PACKED_VECTOR2_ARRAY: VariantTypeAdjust<PackedVector2Array>::adjust(p_dst); break;
+			case Variant::PACKED_VECTOR3_ARRAY: VariantTypeAdjust<PackedVector3Array>::adjust(p_dst); break;
+			case Variant::PACKED_COLOR_ARRAY: VariantTypeAdjust<PackedColorArray>::adjust(p_dst); break;
+			case Variant::PACKED_VECTOR4_ARRAY: VariantTypeAdjust<PackedVector4Array>::adjust(p_dst); break;
+			default:
+				break;
+		}
+	};
+
 #ifdef DEBUG_ENABLED
 	OPCODE_WHILE(ip < _code_size) {
 		int last_opcode = _code_ptr[ip];
@@ -787,29 +832,275 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 			const NativeOperatorSegment *native_segment = get_native_segment(ip);
 			if (native_segment) {
 #ifdef DEBUG_ENABLED
-				last_opcode = GDScriptFunction::OPCODE_OPERATOR_VALIDATED;
+				last_opcode = _code_ptr[ip];
 #endif
 #ifdef DEBUG_ENABLED
-				for (const NativeOperatorStep &native_step : native_segment->steps) {
-					Variant *a = resolve_variant_address(native_step.a_type, native_step.a_index);
-					Variant *b = native_step.unary ? a : resolve_variant_address(native_step.b_type, native_step.b_index);
-					Variant *dst = resolve_variant_address(native_step.dst_type, native_step.dst_index);
-					if (unlikely(!native_step.evaluator || !a || !b || !dst)) {
-#ifdef DEBUG_ENABLED
-						if (err_text.is_empty()) {
-							err_text = "Invalid native operator segment address.";
-						}
-#endif
-					OPCODE_BREAK;
+				for (const NativeStep &native_step : native_segment->steps) {
+					switch (native_step.kind) {
+						case NativeStep::STEP_OPERATOR: {
+							Variant *a = resolve_variant_address(native_step.op.a_type, native_step.op.a_index);
+							Variant *b = native_step.op.unary ? a : resolve_variant_address(native_step.op.b_type, native_step.op.b_index);
+							Variant *dst = resolve_variant_address(native_step.op.dst_type, native_step.op.dst_index);
+							if (unlikely(!native_step.op.evaluator || !a || !b || !dst)) {
+								if (err_text.is_empty()) {
+									err_text = "Invalid native operator segment address.";
+								}
+								OPCODE_BREAK;
+							}
+							native_step.op.evaluator(a, b, dst);
+						} break;
+						case NativeStep::STEP_TYPE_ADJUST: {
+							Variant *dst = resolve_variant_address(native_step.adjust.dst_type, native_step.adjust.dst_index);
+							if (unlikely(!dst)) {
+								if (err_text.is_empty()) {
+									err_text = "Invalid type adjust address.";
+								}
+								OPCODE_BREAK;
+							}
+							adjust_variant_type(dst, native_step.adjust.target_type);
+						} break;
+						case NativeStep::STEP_KEYED_SET: {
+							Variant *dst = resolve_variant_address(native_step.keyed_set.dst_type, native_step.keyed_set.dst_index);
+							Variant *key = resolve_variant_address(native_step.keyed_set.key_type, native_step.keyed_set.key_index);
+							Variant *val = resolve_variant_address(native_step.keyed_set.value_type, native_step.keyed_set.value_index);
+							if (unlikely(!native_step.keyed_set.setter || !dst || !key || !val)) {
+								if (err_text.is_empty()) {
+									err_text = "Invalid keyed set address.";
+								}
+								OPCODE_BREAK;
+							}
+							bool valid;
+							native_step.keyed_set.setter(dst, key, val, &valid);
+							if (unlikely(!valid)) {
+								if (err_text.is_empty()) {
+									err_text = "Invalid keyed set.";
+								}
+								OPCODE_BREAK;
+							}
+						} break;
+						case NativeStep::STEP_KEYED_GET: {
+							Variant *src = resolve_variant_address(native_step.keyed_get.src_type, native_step.keyed_get.src_index);
+							Variant *key = resolve_variant_address(native_step.keyed_get.key_type, native_step.keyed_get.key_index);
+							Variant *dst = resolve_variant_address(native_step.keyed_get.dst_type, native_step.keyed_get.dst_index);
+							if (unlikely(!native_step.keyed_get.getter || !src || !key || !dst)) {
+								if (err_text.is_empty()) {
+									err_text = "Invalid keyed get address.";
+								}
+								OPCODE_BREAK;
+							}
+							bool valid;
+							native_step.keyed_get.getter(src, key, dst, &valid);
+							if (unlikely(!valid)) {
+								if (err_text.is_empty()) {
+									err_text = "Invalid keyed get.";
+								}
+								OPCODE_BREAK;
+							}
+						} break;
+						case NativeStep::STEP_INDEXED_SET: {
+							Variant *dst = resolve_variant_address(native_step.indexed_set.dst_type, native_step.indexed_set.dst_index);
+							Variant *idx_var = resolve_variant_address(native_step.indexed_set.index_type, native_step.indexed_set.index_index);
+							Variant *val = resolve_variant_address(native_step.indexed_set.value_type, native_step.indexed_set.value_index);
+							if (unlikely(!native_step.indexed_set.setter || !dst || !idx_var || !val)) {
+								if (err_text.is_empty()) {
+									err_text = "Invalid indexed set address.";
+								}
+								OPCODE_BREAK;
+							}
+							int64_t idx = *VariantInternal::get_int(idx_var);
+							bool oob;
+							native_step.indexed_set.setter(dst, idx, val, &oob);
+							if (unlikely(oob)) {
+								if (err_text.is_empty()) {
+									err_text = "Invalid indexed set.";
+								}
+								OPCODE_BREAK;
+							}
+						} break;
+						case NativeStep::STEP_INDEXED_GET: {
+							Variant *src = resolve_variant_address(native_step.indexed_get.src_type, native_step.indexed_get.src_index);
+							Variant *idx_var = resolve_variant_address(native_step.indexed_get.index_type, native_step.indexed_get.index_index);
+							Variant *dst = resolve_variant_address(native_step.indexed_get.dst_type, native_step.indexed_get.dst_index);
+							if (unlikely(!native_step.indexed_get.getter || !src || !idx_var || !dst)) {
+								if (err_text.is_empty()) {
+									err_text = "Invalid indexed get address.";
+								}
+								OPCODE_BREAK;
+							}
+							int64_t idx = *VariantInternal::get_int(idx_var);
+							bool oob;
+							native_step.indexed_get.getter(src, idx, dst, &oob);
+							if (unlikely(oob)) {
+								if (err_text.is_empty()) {
+									err_text = "Invalid indexed get.";
+								}
+								OPCODE_BREAK;
+							}
+						} break;
+						case NativeStep::STEP_NAMED_SET: {
+							Variant *dst = resolve_variant_address(native_step.named_set.dst_type, native_step.named_set.dst_index);
+							Variant *val = resolve_variant_address(native_step.named_set.value_type, native_step.named_set.value_index);
+							if (unlikely(!native_step.named_set.setter || !dst || !val)) {
+								if (err_text.is_empty()) {
+									err_text = "Invalid named set address.";
+								}
+								OPCODE_BREAK;
+							}
+							native_step.named_set.setter(dst, val);
+						} break;
+						case NativeStep::STEP_NAMED_GET: {
+							Variant *src = resolve_variant_address(native_step.named_get.src_type, native_step.named_get.src_index);
+							Variant *dst = resolve_variant_address(native_step.named_get.dst_type, native_step.named_get.dst_index);
+							if (unlikely(!native_step.named_get.getter || !src || !dst)) {
+								if (err_text.is_empty()) {
+									err_text = "Invalid named get address.";
+								}
+								OPCODE_BREAK;
+							}
+							native_step.named_get.getter(src, dst);
+						} break;
+						case NativeStep::STEP_CALL_VALIDATED: {
+							Variant *dst = nullptr;
+							Variant *base = nullptr;
+							if (native_step.call.call_kind == NativeCallStep::CALL_BUILTIN) {
+								base = resolve_variant_address(native_step.call.base_type, native_step.call.base_index);
+								if (unlikely(!base)) {
+									if (err_text.is_empty()) {
+										err_text = "Invalid builtin base address.";
+									}
+									OPCODE_BREAK;
+								}
+							}
+							dst = resolve_variant_address(native_step.call.dst_type, native_step.call.dst_index);
+							if (unlikely(!dst)) {
+								if (err_text.is_empty()) {
+									err_text = "Invalid call destination address.";
+								}
+								OPCODE_BREAK;
+							}
+							static thread_local Vector<Variant *> arg_ptrs;
+							arg_ptrs.resize(native_step.call.argc);
+							for (int i = 0; i < native_step.call.argc; i++) {
+								Variant *a = resolve_variant_address(native_step.call.arg_types[i], native_step.call.arg_indices[i]);
+								if (unlikely(!a)) {
+									if (err_text.is_empty()) {
+										err_text = "Invalid call argument address.";
+									}
+									OPCODE_BREAK;
+								}
+								arg_ptrs.write[i] = a;
+							}
+							switch (native_step.call.call_kind) {
+								case NativeCallStep::CALL_BUILTIN: {
+									if (unlikely(!native_step.call.builtin)) {
+										if (err_text.is_empty()) {
+											err_text = "Invalid builtin call.";
+										}
+										OPCODE_BREAK;
+									}
+									native_step.call.builtin(base, (const Variant **)arg_ptrs.ptr(), native_step.call.argc, dst);
+								} break;
+								case NativeCallStep::CALL_UTILITY: {
+									if (unlikely(!native_step.call.utility)) {
+										if (err_text.is_empty()) {
+											err_text = "Invalid utility call.";
+										}
+										OPCODE_BREAK;
+									}
+									native_step.call.utility(dst, (const Variant **)arg_ptrs.ptr(), native_step.call.argc);
+								} break;
+								case NativeCallStep::CALL_GDS_UTILITY: {
+									if (unlikely(!native_step.call.gds_utility)) {
+										if (err_text.is_empty()) {
+											err_text = "Invalid GDS utility call.";
+										}
+										OPCODE_BREAK;
+									}
+									Callable::CallError err;
+									native_step.call.gds_utility(dst, (const Variant **)arg_ptrs.ptr(), native_step.call.argc, err);
+									if (unlikely(err.error != Callable::CallError::CALL_OK)) {
+										if (err_text.is_empty()) {
+											err_text = "Invalid GDS utility call.";
+										}
+										OPCODE_BREAK;
+									}
+								} break;
+							}
+						} break;
 					}
-					native_step.evaluator(a, b, dst);
 				}
 #else
-				for (const NativeOperatorStep &native_step : native_segment->steps) {
-					Variant *a = &variant_addresses[native_step.a_type][native_step.a_index];
-					Variant *b = native_step.unary ? a : &variant_addresses[native_step.b_type][native_step.b_index];
-					Variant *dst = &variant_addresses[native_step.dst_type][native_step.dst_index];
-					native_step.evaluator(a, b, dst);
+				for (const NativeStep &native_step : native_segment->steps) {
+					switch (native_step.kind) {
+						case NativeStep::STEP_OPERATOR: {
+							Variant *a = &variant_addresses[native_step.op.a_type][native_step.op.a_index];
+							Variant *b = native_step.op.unary ? a : &variant_addresses[native_step.op.b_type][native_step.op.b_index];
+							Variant *dst = &variant_addresses[native_step.op.dst_type][native_step.op.dst_index];
+							native_step.op.evaluator(a, b, dst);
+						} break;
+						case NativeStep::STEP_TYPE_ADJUST: {
+							Variant *dst = &variant_addresses[native_step.adjust.dst_type][native_step.adjust.dst_index];
+							adjust_variant_type(dst, native_step.adjust.target_type);
+						} break;
+						case NativeStep::STEP_KEYED_SET: {
+							Variant *dst = &variant_addresses[native_step.keyed_set.dst_type][native_step.keyed_set.dst_index];
+							Variant *key = &variant_addresses[native_step.keyed_set.key_type][native_step.keyed_set.key_index];
+							Variant *val = &variant_addresses[native_step.keyed_set.value_type][native_step.keyed_set.value_index];
+							native_step.keyed_set.setter(dst, key, val, nullptr);
+						} break;
+						case NativeStep::STEP_KEYED_GET: {
+							Variant *src = &variant_addresses[native_step.keyed_get.src_type][native_step.keyed_get.src_index];
+							Variant *key = &variant_addresses[native_step.keyed_get.key_type][native_step.keyed_get.key_index];
+							Variant *dst = &variant_addresses[native_step.keyed_get.dst_type][native_step.keyed_get.dst_index];
+							native_step.keyed_get.getter(src, key, dst, nullptr);
+						} break;
+						case NativeStep::STEP_INDEXED_SET: {
+							Variant *dst = &variant_addresses[native_step.indexed_set.dst_type][native_step.indexed_set.dst_index];
+							Variant *idx_var = &variant_addresses[native_step.indexed_set.index_type][native_step.indexed_set.index_index];
+							Variant *val = &variant_addresses[native_step.indexed_set.value_type][native_step.indexed_set.value_index];
+							int64_t idx = *VariantInternal::get_int(idx_var);
+							native_step.indexed_set.setter(dst, idx, val, nullptr);
+						} break;
+						case NativeStep::STEP_INDEXED_GET: {
+							Variant *src = &variant_addresses[native_step.indexed_get.src_type][native_step.indexed_get.src_index];
+							Variant *idx_var = &variant_addresses[native_step.indexed_get.index_type][native_step.indexed_get.index_index];
+							Variant *dst = &variant_addresses[native_step.indexed_get.dst_type][native_step.indexed_get.dst_index];
+							int64_t idx = *VariantInternal::get_int(idx_var);
+							native_step.indexed_get.getter(src, idx, dst, nullptr);
+						} break;
+						case NativeStep::STEP_NAMED_SET: {
+							Variant *dst = &variant_addresses[native_step.named_set.dst_type][native_step.named_set.dst_index];
+							Variant *val = &variant_addresses[native_step.named_set.value_type][native_step.named_set.value_index];
+							native_step.named_set.setter(dst, val);
+						} break;
+						case NativeStep::STEP_NAMED_GET: {
+							Variant *src = &variant_addresses[native_step.named_get.src_type][native_step.named_get.src_index];
+							Variant *dst = &variant_addresses[native_step.named_get.dst_type][native_step.named_get.dst_index];
+							native_step.named_get.getter(src, dst);
+						} break;
+						case NativeStep::STEP_CALL_VALIDATED: {
+							Variant **arg_ptrs = (Variant **)alloca(sizeof(Variant *) * native_step.call.argc);
+							for (int i = 0; i < native_step.call.argc; i++) {
+								arg_ptrs[i] = &variant_addresses[native_step.call.arg_types[i]][native_step.call.arg_indices[i]];
+							}
+							switch (native_step.call.call_kind) {
+								case NativeCallStep::CALL_BUILTIN: {
+									Variant *base = &variant_addresses[native_step.call.base_type][native_step.call.base_index];
+									Variant *dst = &variant_addresses[native_step.call.dst_type][native_step.call.dst_index];
+									native_step.call.builtin(base, (const Variant **)arg_ptrs, native_step.call.argc, dst);
+								} break;
+								case NativeCallStep::CALL_UTILITY: {
+									Variant *dst = &variant_addresses[native_step.call.dst_type][native_step.call.dst_index];
+									native_step.call.utility(dst, (const Variant **)arg_ptrs, native_step.call.argc);
+								} break;
+								case NativeCallStep::CALL_GDS_UTILITY: {
+									Variant *dst = &variant_addresses[native_step.call.dst_type][native_step.call.dst_index];
+									Callable::CallError err;
+									native_step.call.gds_utility(dst, (const Variant **)arg_ptrs, native_step.call.argc, err);
+								} break;
+							}
+						} break;
+					}
 				}
 #endif
 				ip = native_segment->end_ip;

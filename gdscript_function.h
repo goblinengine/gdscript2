@@ -467,10 +467,113 @@ public:
 		Variant::ValidatedOperatorEvaluator evaluator = nullptr;
 	};
 
+	struct NativeTypeAdjustStep {
+		uint8_t dst_type = 0;
+		uint32_t dst_index = 0;
+		Variant::Type target_type = Variant::NIL;
+	};
+
+	struct NativeKeyedSetterStep {
+		uint8_t dst_type = 0;
+		uint32_t dst_index = 0;
+		uint8_t key_type = 0;
+		uint32_t key_index = 0;
+		uint8_t value_type = 0;
+		uint32_t value_index = 0;
+		Variant::ValidatedKeyedSetter setter = nullptr;
+	};
+
+	struct NativeKeyedGetterStep {
+		uint8_t src_type = 0;
+		uint32_t src_index = 0;
+		uint8_t key_type = 0;
+		uint32_t key_index = 0;
+		uint8_t dst_type = 0;
+		uint32_t dst_index = 0;
+		Variant::ValidatedKeyedGetter getter = nullptr;
+	};
+
+	struct NativeIndexedSetterStep {
+		uint8_t dst_type = 0;
+		uint32_t dst_index = 0;
+		uint8_t index_type = 0;
+		uint32_t index_index = 0;
+		uint8_t value_type = 0;
+		uint32_t value_index = 0;
+		Variant::ValidatedIndexedSetter setter = nullptr;
+	};
+
+	struct NativeIndexedGetterStep {
+		uint8_t src_type = 0;
+		uint32_t src_index = 0;
+		uint8_t index_type = 0;
+		uint32_t index_index = 0;
+		uint8_t dst_type = 0;
+		uint32_t dst_index = 0;
+		Variant::ValidatedIndexedGetter getter = nullptr;
+	};
+
+	struct NativeNamedSetterStep {
+		uint8_t dst_type = 0;
+		uint32_t dst_index = 0;
+		uint8_t value_type = 0;
+		uint32_t value_index = 0;
+		Variant::ValidatedSetter setter = nullptr;
+	};
+
+	struct NativeNamedGetterStep {
+		uint8_t src_type = 0;
+		uint32_t src_index = 0;
+		uint8_t dst_type = 0;
+		uint32_t dst_index = 0;
+		Variant::ValidatedGetter getter = nullptr;
+	};
+
+	struct NativeCallStep {
+		enum CallKind {
+			CALL_BUILTIN,
+			CALL_UTILITY,
+			CALL_GDS_UTILITY,
+		} call_kind = CALL_BUILTIN;
+		uint8_t base_type = 0;
+		uint32_t base_index = 0;
+		uint8_t dst_type = 0;
+		uint32_t dst_index = 0;
+		int argc = 0;
+		Vector<uint8_t> arg_types;
+		Vector<uint32_t> arg_indices;
+		Variant::ValidatedBuiltInMethod builtin = nullptr;
+		Variant::ValidatedUtilityFunction utility = nullptr;
+		GDScriptUtilityFunctions::FunctionPtr gds_utility = nullptr;
+	};
+
+	struct NativeStep {
+		enum Kind {
+			STEP_OPERATOR,
+			STEP_TYPE_ADJUST,
+			STEP_KEYED_SET,
+			STEP_KEYED_GET,
+			STEP_INDEXED_SET,
+			STEP_INDEXED_GET,
+			STEP_NAMED_SET,
+			STEP_NAMED_GET,
+			STEP_CALL_VALIDATED,
+		} kind = STEP_OPERATOR;
+		NativeOperatorStep op;
+		NativeTypeAdjustStep adjust;
+		NativeKeyedSetterStep keyed_set;
+		NativeKeyedGetterStep keyed_get;
+		NativeIndexedSetterStep indexed_set;
+		NativeIndexedGetterStep indexed_get;
+		NativeNamedSetterStep named_set;
+		NativeNamedGetterStep named_get;
+		NativeCallStep call;
+	};
+
 	struct NativeOperatorSegment {
 		int start_ip = 0;
 		int end_ip = 0;
-		Vector<NativeOperatorStep> steps;
+		Vector<NativeStep> steps;
 	};
 
 private:

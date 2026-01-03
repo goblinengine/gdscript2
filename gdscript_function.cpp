@@ -58,63 +58,493 @@ void GDScriptFunction::prepare_native_jit() {
 	native_segment_index_by_ip.clear();
 	native_segments_ready = false;
 
-	if (native_operator_hints.is_empty() || !_code_ptr || _operator_funcs_count == 0) {
+	if (!_code_ptr) {
 		native_segments_ready = true;
 		return;
 	}
 
-	NativeOperatorSegment current_segment;
+	auto opcode_size_at = [&](int p_ip) -> int {
+		if (p_ip < 0 || p_ip >= _code_size) {
+			return 1;
+		}
+		int op = _code_ptr[p_ip];
+		switch (op) {
+			case OPCODE_OPERATOR_VALIDATED:
+				return 5;
+			case OPCODE_SET_NAMED_VALIDATED:
+			case OPCODE_GET_NAMED_VALIDATED:
+				return 4;
+			case OPCODE_SET_KEYED_VALIDATED:
+			case OPCODE_GET_KEYED_VALIDATED:
+			case OPCODE_SET_INDEXED_VALIDATED:
+			case OPCODE_GET_INDEXED_VALIDATED:
+				return 5;
+			case OPCODE_CALL_BUILTIN_TYPE_VALIDATED:
+			case OPCODE_CALL_UTILITY_VALIDATED:
+			case OPCODE_CALL_GDSCRIPT_UTILITY:
+				return 4 + _code_ptr[p_ip + 1];
+			case OPCODE_TYPE_ADJUST_BOOL:
+			case OPCODE_TYPE_ADJUST_INT:
+			case OPCODE_TYPE_ADJUST_FLOAT:
+			case OPCODE_TYPE_ADJUST_STRING:
+			case OPCODE_TYPE_ADJUST_VECTOR2:
+			case OPCODE_TYPE_ADJUST_VECTOR2I:
+			case OPCODE_TYPE_ADJUST_RECT2:
+			case OPCODE_TYPE_ADJUST_RECT2I:
+			case OPCODE_TYPE_ADJUST_VECTOR3:
+			case OPCODE_TYPE_ADJUST_VECTOR3I:
+			case OPCODE_TYPE_ADJUST_TRANSFORM2D:
+			case OPCODE_TYPE_ADJUST_VECTOR4:
+			case OPCODE_TYPE_ADJUST_VECTOR4I:
+			case OPCODE_TYPE_ADJUST_PLANE:
+			case OPCODE_TYPE_ADJUST_QUATERNION:
+			case OPCODE_TYPE_ADJUST_AABB:
+			case OPCODE_TYPE_ADJUST_BASIS:
+			case OPCODE_TYPE_ADJUST_TRANSFORM3D:
+			case OPCODE_TYPE_ADJUST_PROJECTION:
+			case OPCODE_TYPE_ADJUST_COLOR:
+			case OPCODE_TYPE_ADJUST_STRING_NAME:
+			case OPCODE_TYPE_ADJUST_NODE_PATH:
+			case OPCODE_TYPE_ADJUST_RID:
+			case OPCODE_TYPE_ADJUST_OBJECT:
+			case OPCODE_TYPE_ADJUST_CALLABLE:
+			case OPCODE_TYPE_ADJUST_SIGNAL:
+			case OPCODE_TYPE_ADJUST_DICTIONARY:
+			case OPCODE_TYPE_ADJUST_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_BYTE_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_INT32_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_INT64_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_FLOAT32_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_FLOAT64_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_STRING_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_VECTOR2_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_VECTOR3_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_COLOR_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_VECTOR4_ARRAY:
+				return 2;
+			default:
+				return 1;
+		}
+	};
+
+	auto is_supported = [&](int op) -> bool {
+		switch (op) {
+			case OPCODE_OPERATOR_VALIDATED:
+				return true;
+			case OPCODE_SET_NAMED_VALIDATED:
+			case OPCODE_GET_NAMED_VALIDATED:
+				return true;
+			case OPCODE_SET_KEYED_VALIDATED:
+			case OPCODE_GET_KEYED_VALIDATED:
+			case OPCODE_SET_INDEXED_VALIDATED:
+			case OPCODE_GET_INDEXED_VALIDATED:
+				return true;
+			case OPCODE_CALL_BUILTIN_TYPE_VALIDATED:
+			case OPCODE_CALL_UTILITY_VALIDATED:
+			case OPCODE_CALL_GDSCRIPT_UTILITY:
+				return true;
+			case OPCODE_TYPE_ADJUST_BOOL:
+			case OPCODE_TYPE_ADJUST_INT:
+			case OPCODE_TYPE_ADJUST_FLOAT:
+			case OPCODE_TYPE_ADJUST_STRING:
+			case OPCODE_TYPE_ADJUST_VECTOR2:
+			case OPCODE_TYPE_ADJUST_VECTOR2I:
+			case OPCODE_TYPE_ADJUST_RECT2:
+			case OPCODE_TYPE_ADJUST_RECT2I:
+			case OPCODE_TYPE_ADJUST_VECTOR3:
+			case OPCODE_TYPE_ADJUST_VECTOR3I:
+			case OPCODE_TYPE_ADJUST_TRANSFORM2D:
+			case OPCODE_TYPE_ADJUST_VECTOR4:
+			case OPCODE_TYPE_ADJUST_VECTOR4I:
+			case OPCODE_TYPE_ADJUST_PLANE:
+			case OPCODE_TYPE_ADJUST_QUATERNION:
+			case OPCODE_TYPE_ADJUST_AABB:
+			case OPCODE_TYPE_ADJUST_BASIS:
+			case OPCODE_TYPE_ADJUST_TRANSFORM3D:
+			case OPCODE_TYPE_ADJUST_PROJECTION:
+			case OPCODE_TYPE_ADJUST_COLOR:
+			case OPCODE_TYPE_ADJUST_STRING_NAME:
+			case OPCODE_TYPE_ADJUST_NODE_PATH:
+			case OPCODE_TYPE_ADJUST_RID:
+			case OPCODE_TYPE_ADJUST_OBJECT:
+			case OPCODE_TYPE_ADJUST_CALLABLE:
+			case OPCODE_TYPE_ADJUST_SIGNAL:
+			case OPCODE_TYPE_ADJUST_DICTIONARY:
+			case OPCODE_TYPE_ADJUST_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_BYTE_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_INT32_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_INT64_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_FLOAT32_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_FLOAT64_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_STRING_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_VECTOR2_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_VECTOR3_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_COLOR_ARRAY:
+			case OPCODE_TYPE_ADJUST_PACKED_VECTOR4_ARRAY:
+				return true;
+			default:
+				return false;
+		}
+	};
+
+	HashMap<int, bool> unary_map;
 	for (const NativeOperatorHint &hint : native_operator_hints) {
-		if (!is_math_operator(hint.op)) {
-			continue;
-		}
-
-		if (_code_ptr[hint.ip] != OPCODE_OPERATOR_VALIDATED) {
-			continue;
-		}
-
-		int operator_func_index = _code_ptr[hint.ip + 4];
-		if (operator_func_index < 0 || operator_func_index >= _operator_funcs_count) {
-			continue;
-		}
-
-		NativeOperatorStep step;
-		int a_address = _code_ptr[hint.ip + 1];
-		int b_address = _code_ptr[hint.ip + 2];
-		int dst_address = _code_ptr[hint.ip + 3];
-		step.a_type = (uint8_t)((a_address & ADDR_TYPE_MASK) >> ADDR_BITS);
-		step.b_type = (uint8_t)((b_address & ADDR_TYPE_MASK) >> ADDR_BITS);
-		step.dst_type = (uint8_t)((dst_address & ADDR_TYPE_MASK) >> ADDR_BITS);
-		step.a_index = (uint32_t)(a_address & ADDR_MASK);
-		step.b_index = (uint32_t)(b_address & ADDR_MASK);
-		step.dst_index = (uint32_t)(dst_address & ADDR_MASK);
-		step.evaluator = _operator_funcs_ptr[operator_func_index];
-		step.unary = hint.unary;
-
-		// Group consecutive validated math operators into a single native segment.
-		if (current_segment.steps.is_empty()) {
-			current_segment.start_ip = hint.ip;
-			current_segment.end_ip = hint.ip + 5;
-			current_segment.steps.push_back(step);
-			continue;
-		}
-
-		if (hint.ip == current_segment.end_ip) {
-			current_segment.steps.push_back(step);
-			current_segment.end_ip = hint.ip + 5;
-		} else {
-			native_segment_lookup.insert(current_segment.start_ip, native_operator_segments.size());
-			native_operator_segments.push_back(current_segment);
-			current_segment = NativeOperatorSegment();
-			current_segment.start_ip = hint.ip;
-			current_segment.end_ip = hint.ip + 5;
-			current_segment.steps.push_back(step);
-		}
+		unary_map.insert(hint.ip, hint.unary);
 	}
 
-	if (!current_segment.steps.is_empty()) {
-		native_segment_lookup.insert(current_segment.start_ip, native_operator_segments.size());
-		native_operator_segments.push_back(current_segment);
+	auto build_operator_step = [&](NativeStep &r_step, int ip) -> bool {
+		int operator_func_index = _code_ptr[ip + 4];
+		if (operator_func_index < 0 || operator_func_index >= _operator_funcs_count) {
+			return false;
+		}
+		int a_address = _code_ptr[ip + 1];
+		int b_address = _code_ptr[ip + 2];
+		int dst_address = _code_ptr[ip + 3];
+		r_step.kind = NativeStep::STEP_OPERATOR;
+		r_step.op.a_type = (uint8_t)((a_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.op.b_type = (uint8_t)((b_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.op.dst_type = (uint8_t)((dst_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.op.a_index = (uint32_t)(a_address & ADDR_MASK);
+		r_step.op.b_index = (uint32_t)(b_address & ADDR_MASK);
+		r_step.op.dst_index = (uint32_t)(dst_address & ADDR_MASK);
+		r_step.op.evaluator = _operator_funcs_ptr[operator_func_index];
+		const HashMap<int, bool>::ConstIterator it = unary_map.find(ip);
+		r_step.op.unary = it ? it->value : false;
+		return true;
+	};
+
+	auto build_keyed_set_step = [&](NativeStep &r_step, int ip) -> bool {
+		int setter_idx = _code_ptr[ip + 4];
+		if (setter_idx < 0 || setter_idx >= _keyed_setters_count) {
+			return false;
+		}
+		int dst_address = _code_ptr[ip + 1];
+		int key_address = _code_ptr[ip + 2];
+		int value_address = _code_ptr[ip + 3];
+		r_step.kind = NativeStep::STEP_KEYED_SET;
+		r_step.keyed_set.dst_type = (uint8_t)((dst_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.keyed_set.dst_index = (uint32_t)(dst_address & ADDR_MASK);
+		r_step.keyed_set.key_type = (uint8_t)((key_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.keyed_set.key_index = (uint32_t)(key_address & ADDR_MASK);
+		r_step.keyed_set.value_type = (uint8_t)((value_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.keyed_set.value_index = (uint32_t)(value_address & ADDR_MASK);
+		r_step.keyed_set.setter = _keyed_setters_ptr[setter_idx];
+		return true;
+	};
+
+	auto build_keyed_get_step = [&](NativeStep &r_step, int ip) -> bool {
+		int getter_idx = _code_ptr[ip + 4];
+		if (getter_idx < 0 || getter_idx >= _keyed_getters_count) {
+			return false;
+		}
+		int src_address = _code_ptr[ip + 1];
+		int key_address = _code_ptr[ip + 2];
+		int dst_address = _code_ptr[ip + 3];
+		r_step.kind = NativeStep::STEP_KEYED_GET;
+		r_step.keyed_get.src_type = (uint8_t)((src_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.keyed_get.src_index = (uint32_t)(src_address & ADDR_MASK);
+		r_step.keyed_get.key_type = (uint8_t)((key_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.keyed_get.key_index = (uint32_t)(key_address & ADDR_MASK);
+		r_step.keyed_get.dst_type = (uint8_t)((dst_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.keyed_get.dst_index = (uint32_t)(dst_address & ADDR_MASK);
+		r_step.keyed_get.getter = _keyed_getters_ptr[getter_idx];
+		return true;
+	};
+
+	auto build_indexed_set_step = [&](NativeStep &r_step, int ip) -> bool {
+		int setter_idx = _code_ptr[ip + 4];
+		if (setter_idx < 0 || setter_idx >= _indexed_setters_count) {
+			return false;
+		}
+		int dst_address = _code_ptr[ip + 1];
+		int index_address = _code_ptr[ip + 2];
+		int value_address = _code_ptr[ip + 3];
+		r_step.kind = NativeStep::STEP_INDEXED_SET;
+		r_step.indexed_set.dst_type = (uint8_t)((dst_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.indexed_set.dst_index = (uint32_t)(dst_address & ADDR_MASK);
+		r_step.indexed_set.index_type = (uint8_t)((index_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.indexed_set.index_index = (uint32_t)(index_address & ADDR_MASK);
+		r_step.indexed_set.value_type = (uint8_t)((value_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.indexed_set.value_index = (uint32_t)(value_address & ADDR_MASK);
+		r_step.indexed_set.setter = _indexed_setters_ptr[setter_idx];
+		return true;
+	};
+
+	auto build_indexed_get_step = [&](NativeStep &r_step, int ip) -> bool {
+		int getter_idx = _code_ptr[ip + 4];
+		if (getter_idx < 0 || getter_idx >= _indexed_getters_count) {
+			return false;
+		}
+		int src_address = _code_ptr[ip + 1];
+		int index_address = _code_ptr[ip + 2];
+		int dst_address = _code_ptr[ip + 3];
+		r_step.kind = NativeStep::STEP_INDEXED_GET;
+		r_step.indexed_get.src_type = (uint8_t)((src_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.indexed_get.src_index = (uint32_t)(src_address & ADDR_MASK);
+		r_step.indexed_get.index_type = (uint8_t)((index_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.indexed_get.index_index = (uint32_t)(index_address & ADDR_MASK);
+		r_step.indexed_get.dst_type = (uint8_t)((dst_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.indexed_get.dst_index = (uint32_t)(dst_address & ADDR_MASK);
+		r_step.indexed_get.getter = _indexed_getters_ptr[getter_idx];
+		return true;
+	};
+
+	auto build_named_set_step = [&](NativeStep &r_step, int ip) -> bool {
+		int setter_idx = _code_ptr[ip + 3];
+		if (setter_idx < 0 || setter_idx >= _setters_count) {
+			return false;
+		}
+		int dst_address = _code_ptr[ip + 1];
+		int value_address = _code_ptr[ip + 2];
+		r_step.kind = NativeStep::STEP_NAMED_SET;
+		r_step.named_set.dst_type = (uint8_t)((dst_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.named_set.dst_index = (uint32_t)(dst_address & ADDR_MASK);
+		r_step.named_set.value_type = (uint8_t)((value_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.named_set.value_index = (uint32_t)(value_address & ADDR_MASK);
+		r_step.named_set.setter = _setters_ptr[setter_idx];
+		return true;
+	};
+
+	auto build_named_get_step = [&](NativeStep &r_step, int ip) -> bool {
+		int getter_idx = _code_ptr[ip + 3];
+		if (getter_idx < 0 || getter_idx >= _getters_count) {
+			return false;
+		}
+		int src_address = _code_ptr[ip + 1];
+		int dst_address = _code_ptr[ip + 2];
+		r_step.kind = NativeStep::STEP_NAMED_GET;
+		r_step.named_get.src_type = (uint8_t)((src_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.named_get.src_index = (uint32_t)(src_address & ADDR_MASK);
+		r_step.named_get.dst_type = (uint8_t)((dst_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.named_get.dst_index = (uint32_t)(dst_address & ADDR_MASK);
+		r_step.named_get.getter = _getters_ptr[getter_idx];
+		return true;
+	};
+
+	auto build_call_step = [&](NativeStep &r_step, int ip) -> bool {
+		int instr_argc = _code_ptr[ip + 1];
+		if (instr_argc < 0) {
+			return false;
+		}
+		int argc_value = _code_ptr[ip + 2 + instr_argc];
+		if (argc_value < 0) {
+			return false;
+		}
+
+		r_step.kind = NativeStep::STEP_CALL_VALIDATED;
+		r_step.call.argc = argc_value;
+		r_step.call.arg_types.resize(argc_value);
+		r_step.call.arg_indices.resize(argc_value);
+
+		switch (_code_ptr[ip]) {
+			case OPCODE_CALL_BUILTIN_TYPE_VALIDATED: {
+				r_step.call.call_kind = NativeCallStep::CALL_BUILTIN;
+				int addr_base = ip + 2;
+				int base_pos = addr_base + argc_value;
+				int dst_pos = base_pos + 1;
+				int func_pos = dst_pos + 2;
+				int func_index = _code_ptr[func_pos];
+				if (func_index < 0 || func_index >= _builtin_methods_count) {
+					return false;
+				}
+				r_step.call.base_type = (uint8_t)((_code_ptr[base_pos] & ADDR_TYPE_MASK) >> ADDR_BITS);
+				r_step.call.base_index = (uint32_t)(_code_ptr[base_pos] & ADDR_MASK);
+				r_step.call.dst_type = (uint8_t)((_code_ptr[dst_pos] & ADDR_TYPE_MASK) >> ADDR_BITS);
+				r_step.call.dst_index = (uint32_t)(_code_ptr[dst_pos] & ADDR_MASK);
+				r_step.call.builtin = _builtin_methods_ptr[func_index];
+				for (int i = 0; i < argc_value; i++) {
+					int addr = _code_ptr[addr_base + i];
+					r_step.call.arg_types.write[i] = (uint8_t)((addr & ADDR_TYPE_MASK) >> ADDR_BITS);
+					r_step.call.arg_indices.write[i] = (uint32_t)(addr & ADDR_MASK);
+				}
+			} break;
+			case OPCODE_CALL_UTILITY_VALIDATED: {
+				r_step.call.call_kind = NativeCallStep::CALL_UTILITY;
+				int addr_base = ip + 2;
+				int dst_pos = addr_base + argc_value;
+				int func_pos = dst_pos + 2;
+				Variant::ValidatedUtilityFunction func = reinterpret_cast<Variant::ValidatedUtilityFunction>(_code_ptr[func_pos]);
+				r_step.call.dst_type = (uint8_t)((_code_ptr[dst_pos] & ADDR_TYPE_MASK) >> ADDR_BITS);
+				r_step.call.dst_index = (uint32_t)(_code_ptr[dst_pos] & ADDR_MASK);
+				r_step.call.utility = func;
+				for (int i = 0; i < argc_value; i++) {
+					int addr = _code_ptr[addr_base + i];
+					r_step.call.arg_types.write[i] = (uint8_t)((addr & ADDR_TYPE_MASK) >> ADDR_BITS);
+					r_step.call.arg_indices.write[i] = (uint32_t)(addr & ADDR_MASK);
+				}
+			} break;
+			case OPCODE_CALL_GDSCRIPT_UTILITY: {
+				r_step.call.call_kind = NativeCallStep::CALL_GDS_UTILITY;
+				int addr_base = ip + 2;
+				int dst_pos = addr_base + argc_value;
+				int func_pos = dst_pos + 2;
+				GDScriptUtilityFunctions::FunctionPtr func = reinterpret_cast<GDScriptUtilityFunctions::FunctionPtr>(_code_ptr[func_pos]);
+				r_step.call.dst_type = (uint8_t)((_code_ptr[dst_pos] & ADDR_TYPE_MASK) >> ADDR_BITS);
+				r_step.call.dst_index = (uint32_t)(_code_ptr[dst_pos] & ADDR_MASK);
+				r_step.call.gds_utility = func;
+				for (int i = 0; i < argc_value; i++) {
+					int addr = _code_ptr[addr_base + i];
+					r_step.call.arg_types.write[i] = (uint8_t)((addr & ADDR_TYPE_MASK) >> ADDR_BITS);
+					r_step.call.arg_indices.write[i] = (uint32_t)(addr & ADDR_MASK);
+				}
+			} break;
+			default:
+				return false;
+		}
+
+		return true;
+	};
+
+	auto build_type_adjust_step = [&](NativeStep &r_step, int ip, Variant::Type type) {
+		int dst_address = _code_ptr[ip + 1];
+		r_step.kind = NativeStep::STEP_TYPE_ADJUST;
+		r_step.adjust.dst_type = (uint8_t)((dst_address & ADDR_TYPE_MASK) >> ADDR_BITS);
+		r_step.adjust.dst_index = (uint32_t)(dst_address & ADDR_MASK);
+		r_step.adjust.target_type = type;
+	};
+
+	Vector<NativeOperatorSegment> segments;
+	int ip = 0;
+	while (ip < _code_size) {
+		int op = _code_ptr[ip];
+		if (!is_supported(op)) {
+			ip += opcode_size_at(ip);
+			continue;
+		}
+
+		NativeOperatorSegment segment;
+		segment.start_ip = ip;
+		int cursor = ip;
+		while (cursor < _code_size) {
+			int current_op = _code_ptr[cursor];
+			if (!is_supported(current_op)) {
+				break;
+			}
+			NativeStep step;
+			switch (current_op) {
+				case OPCODE_OPERATOR_VALIDATED: {
+					if (!build_operator_step(step, cursor)) {
+						cursor = _code_size;
+						continue;
+					}
+				} break;
+				case OPCODE_SET_NAMED_VALIDATED: {
+					if (!build_named_set_step(step, cursor)) {
+						cursor = _code_size;
+						continue;
+					}
+				} break;
+				case OPCODE_GET_NAMED_VALIDATED: {
+					if (!build_named_get_step(step, cursor)) {
+						cursor = _code_size;
+						continue;
+					}
+				} break;
+				case OPCODE_SET_KEYED_VALIDATED: {
+					if (!build_keyed_set_step(step, cursor)) {
+						cursor = _code_size;
+						continue;
+					}
+				} break;
+				case OPCODE_GET_KEYED_VALIDATED: {
+					if (!build_keyed_get_step(step, cursor)) {
+						cursor = _code_size;
+						continue;
+					}
+				} break;
+				case OPCODE_SET_INDEXED_VALIDATED: {
+					if (!build_indexed_set_step(step, cursor)) {
+						cursor = _code_size;
+						continue;
+					}
+				} break;
+				case OPCODE_GET_INDEXED_VALIDATED: {
+					if (!build_indexed_get_step(step, cursor)) {
+						cursor = _code_size;
+						continue;
+					}
+				} break;
+				case OPCODE_CALL_BUILTIN_TYPE_VALIDATED:
+				case OPCODE_CALL_UTILITY_VALIDATED:
+				case OPCODE_CALL_GDSCRIPT_UTILITY: {
+					if (!build_call_step(step, cursor)) {
+						cursor = _code_size;
+						continue;
+					}
+				} break;
+				default: {
+					Variant::Type type = Variant::NIL;
+					switch (current_op) {
+						case OPCODE_TYPE_ADJUST_BOOL: type = Variant::BOOL; break;
+						case OPCODE_TYPE_ADJUST_INT: type = Variant::INT; break;
+						case OPCODE_TYPE_ADJUST_FLOAT: type = Variant::FLOAT; break;
+						case OPCODE_TYPE_ADJUST_STRING: type = Variant::STRING; break;
+						case OPCODE_TYPE_ADJUST_VECTOR2: type = Variant::VECTOR2; break;
+						case OPCODE_TYPE_ADJUST_VECTOR2I: type = Variant::VECTOR2I; break;
+						case OPCODE_TYPE_ADJUST_RECT2: type = Variant::RECT2; break;
+						case OPCODE_TYPE_ADJUST_RECT2I: type = Variant::RECT2I; break;
+						case OPCODE_TYPE_ADJUST_VECTOR3: type = Variant::VECTOR3; break;
+						case OPCODE_TYPE_ADJUST_VECTOR3I: type = Variant::VECTOR3I; break;
+						case OPCODE_TYPE_ADJUST_TRANSFORM2D: type = Variant::TRANSFORM2D; break;
+						case OPCODE_TYPE_ADJUST_VECTOR4: type = Variant::VECTOR4; break;
+						case OPCODE_TYPE_ADJUST_VECTOR4I: type = Variant::VECTOR4I; break;
+						case OPCODE_TYPE_ADJUST_PLANE: type = Variant::PLANE; break;
+						case OPCODE_TYPE_ADJUST_QUATERNION: type = Variant::QUATERNION; break;
+						case OPCODE_TYPE_ADJUST_AABB: type = Variant::AABB; break;
+						case OPCODE_TYPE_ADJUST_BASIS: type = Variant::BASIS; break;
+						case OPCODE_TYPE_ADJUST_TRANSFORM3D: type = Variant::TRANSFORM3D; break;
+						case OPCODE_TYPE_ADJUST_PROJECTION: type = Variant::PROJECTION; break;
+						case OPCODE_TYPE_ADJUST_COLOR: type = Variant::COLOR; break;
+						case OPCODE_TYPE_ADJUST_STRING_NAME: type = Variant::STRING_NAME; break;
+						case OPCODE_TYPE_ADJUST_NODE_PATH: type = Variant::NODE_PATH; break;
+						case OPCODE_TYPE_ADJUST_RID: type = Variant::RID; break;
+						case OPCODE_TYPE_ADJUST_OBJECT: type = Variant::OBJECT; break;
+						case OPCODE_TYPE_ADJUST_CALLABLE: type = Variant::CALLABLE; break;
+						case OPCODE_TYPE_ADJUST_SIGNAL: type = Variant::SIGNAL; break;
+						case OPCODE_TYPE_ADJUST_DICTIONARY: type = Variant::DICTIONARY; break;
+						case OPCODE_TYPE_ADJUST_ARRAY: type = Variant::ARRAY; break;
+						case OPCODE_TYPE_ADJUST_PACKED_BYTE_ARRAY: type = Variant::PACKED_BYTE_ARRAY; break;
+						case OPCODE_TYPE_ADJUST_PACKED_INT32_ARRAY: type = Variant::PACKED_INT32_ARRAY; break;
+						case OPCODE_TYPE_ADJUST_PACKED_INT64_ARRAY: type = Variant::PACKED_INT64_ARRAY; break;
+						case OPCODE_TYPE_ADJUST_PACKED_FLOAT32_ARRAY: type = Variant::PACKED_FLOAT32_ARRAY; break;
+						case OPCODE_TYPE_ADJUST_PACKED_FLOAT64_ARRAY: type = Variant::PACKED_FLOAT64_ARRAY; break;
+						case OPCODE_TYPE_ADJUST_PACKED_STRING_ARRAY: type = Variant::PACKED_STRING_ARRAY; break;
+						case OPCODE_TYPE_ADJUST_PACKED_VECTOR2_ARRAY: type = Variant::PACKED_VECTOR2_ARRAY; break;
+						case OPCODE_TYPE_ADJUST_PACKED_VECTOR3_ARRAY: type = Variant::PACKED_VECTOR3_ARRAY; break;
+						case OPCODE_TYPE_ADJUST_PACKED_COLOR_ARRAY: type = Variant::PACKED_COLOR_ARRAY; break;
+						case OPCODE_TYPE_ADJUST_PACKED_VECTOR4_ARRAY: type = Variant::PACKED_VECTOR4_ARRAY; break;
+						default:
+							break;
+					}
+					if (type == Variant::NIL) {
+						cursor = _code_size;
+						continue;
+					}
+					build_type_adjust_step(step, cursor, type);
+				} break;
+			}
+			segment.steps.push_back(step);
+			cursor += opcode_size_at(cursor);
+		}
+
+		segment.end_ip = cursor;
+		segments.push_back(segment);
+		ip = cursor;
+	}
+
+	native_operator_segments = segments;
+
+	const int k_min_native_steps = 10;
+	if (!native_operator_segments.is_empty()) {
+		Vector<NativeOperatorSegment> filtered;
+		filtered.reserve(native_operator_segments.size());
+		for (const NativeOperatorSegment &seg : native_operator_segments) {
+			if (seg.steps.size() < k_min_native_steps) {
+				continue;
+			}
+			filtered.push_back(seg);
+		}
+		native_operator_segments = filtered;
 	}
 
 	if (_code_size > 0) {
