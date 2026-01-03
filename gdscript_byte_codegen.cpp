@@ -1019,17 +1019,66 @@ void GDScriptByteCodeGenerator::write_assign(const Address &p_target, const Addr
 	}
 }
 
-void GDScriptByteCodeGenerator::write_add_sub_assign(const Address &p_target, const Address &p_source, Variant::Operator p_op) {
-	ERR_FAIL_COND_MSG(!(p_target.type.kind == GDScriptDataType::BUILTIN && p_source.type.kind == GDScriptDataType::BUILTIN), "Fused add/sub assign requires builtin types.");
+void GDScriptByteCodeGenerator::write_arithmetic_assign(const Address &p_target, const Address &p_source, Variant::Operator p_op) {
+	ERR_FAIL_COND_MSG(!(p_target.type.kind == GDScriptDataType::BUILTIN && p_source.type.kind == GDScriptDataType::BUILTIN), "Fused arithmetic assign requires builtin types.");
+	ERR_FAIL_COND_MSG(p_target.type.builtin_type != p_source.type.builtin_type, "Fused arithmetic assign requires matching builtin types.");
+	ERR_FAIL_COND_MSG(!(p_target.type.builtin_type == Variant::INT || p_target.type.builtin_type == Variant::FLOAT), "Fused arithmetic assign only supports int/float.");
+
 	GDScriptFunction::Opcode op = GDScriptFunction::OPCODE_ADD_ASSIGN_INT;
-	if (p_target.type.builtin_type == Variant::FLOAT && p_source.type.builtin_type == Variant::FLOAT) {
-		op = (p_op == Variant::OP_SUBTRACT) ? GDScriptFunction::OPCODE_SUB_ASSIGN_FLOAT : GDScriptFunction::OPCODE_ADD_ASSIGN_FLOAT;
+	if (p_target.type.builtin_type == Variant::FLOAT) {
+		switch (p_op) {
+			case Variant::OP_ADD:
+				op = GDScriptFunction::OPCODE_ADD_ASSIGN_FLOAT;
+				break;
+			case Variant::OP_SUBTRACT:
+				op = GDScriptFunction::OPCODE_SUB_ASSIGN_FLOAT;
+				break;
+			case Variant::OP_MULTIPLY:
+				op = GDScriptFunction::OPCODE_MUL_ASSIGN_FLOAT;
+				break;
+			case Variant::OP_DIVIDE:
+				op = GDScriptFunction::OPCODE_DIV_ASSIGN_FLOAT;
+				break;
+			default:
+				ERR_FAIL_MSG("Unsupported fused float assignment operator.");
+		}
 	} else {
-		op = (p_op == Variant::OP_SUBTRACT) ? GDScriptFunction::OPCODE_SUB_ASSIGN_INT : GDScriptFunction::OPCODE_ADD_ASSIGN_INT;
+		switch (p_op) {
+			case Variant::OP_ADD:
+				op = GDScriptFunction::OPCODE_ADD_ASSIGN_INT;
+				break;
+			case Variant::OP_SUBTRACT:
+				op = GDScriptFunction::OPCODE_SUB_ASSIGN_INT;
+				break;
+			case Variant::OP_MULTIPLY:
+				op = GDScriptFunction::OPCODE_MUL_ASSIGN_INT;
+				break;
+			case Variant::OP_DIVIDE:
+				op = GDScriptFunction::OPCODE_DIV_ASSIGN_INT;
+				break;
+			case Variant::OP_MODULE:
+				op = GDScriptFunction::OPCODE_MOD_ASSIGN_INT;
+				break;
+			default:
+				ERR_FAIL_MSG("Unsupported fused int assignment operator.");
+		}
 	}
+
 	append_opcode(op);
 	append(p_target);
 	append(p_source);
+}
+
+void GDScriptByteCodeGenerator::write_inc_int(const Address &p_target) {
+	ERR_FAIL_COND_MSG(!(p_target.type.kind == GDScriptDataType::BUILTIN && p_target.type.builtin_type == Variant::INT), "INC_INT requires int target.");
+	append_opcode(GDScriptFunction::OPCODE_INC_INT);
+	append(p_target);
+}
+
+void GDScriptByteCodeGenerator::write_dec_int(const Address &p_target) {
+	ERR_FAIL_COND_MSG(!(p_target.type.kind == GDScriptDataType::BUILTIN && p_target.type.builtin_type == Variant::INT), "DEC_INT requires int target.");
+	append_opcode(GDScriptFunction::OPCODE_DEC_INT);
+	append(p_target);
 }
 
 void GDScriptByteCodeGenerator::write_assign_null(const Address &p_target) {

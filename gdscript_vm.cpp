@@ -290,6 +290,13 @@ void (*type_init_function_table[])(Variant *) = {
 		&&OPCODE_ADD_ASSIGN_FLOAT,                       \
 		&&OPCODE_SUB_ASSIGN_INT,                         \
 		&&OPCODE_SUB_ASSIGN_FLOAT,                       \
+		&&OPCODE_MUL_ASSIGN_INT,                         \
+		&&OPCODE_MUL_ASSIGN_FLOAT,                       \
+		&&OPCODE_DIV_ASSIGN_INT,                         \
+		&&OPCODE_DIV_ASSIGN_FLOAT,                       \
+		&&OPCODE_MOD_ASSIGN_INT,                         \
+		&&OPCODE_INC_INT,                                \
+		&&OPCODE_DEC_INT,                                \
 		&&OPCODE_CAST_TO_BUILTIN,                        \
 		&&OPCODE_CAST_TO_NATIVE,                         \
 		&&OPCODE_CAST_TO_SCRIPT,                         \
@@ -1938,6 +1945,126 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 				*VariantInternal::get_float(dst) = lhs - rhs;
 
 				ip += 3;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_MUL_ASSIGN_INT) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(dst, 0);
+				GET_VARIANT_PTR(src, 1);
+
+				int64_t lhs = *VariantInternal::get_int(dst);
+				int64_t rhs = *VariantInternal::get_int(src);
+				*VariantInternal::get_int(dst) = lhs * rhs;
+
+				ip += 3;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_MUL_ASSIGN_FLOAT) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(dst, 0);
+				GET_VARIANT_PTR(src, 1);
+
+				double lhs = *VariantInternal::get_float(dst);
+				double rhs = *VariantInternal::get_float(src);
+				*VariantInternal::get_float(dst) = lhs * rhs;
+
+				ip += 3;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_DIV_ASSIGN_INT) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(dst, 0);
+				GET_VARIANT_PTR(src, 1);
+
+				int64_t rhs = *VariantInternal::get_int(src);
+				if (unlikely(rhs == 0)) {
+					bool valid = false;
+					Variant tmp;
+					Variant::evaluate(Variant::OP_DIVIDE, *dst, *src, tmp, valid);
+#ifdef DEBUG_ENABLED
+					err_text = (tmp.get_type() == Variant::STRING) ? tmp.operator String() : String("Division by zero.");
+#endif
+					OPCODE_BREAK;
+				}
+
+				int64_t lhs = *VariantInternal::get_int(dst);
+				*VariantInternal::get_int(dst) = lhs / rhs;
+
+				ip += 3;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_DIV_ASSIGN_FLOAT) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(dst, 0);
+				GET_VARIANT_PTR(src, 1);
+
+				double rhs = *VariantInternal::get_float(src);
+				if (unlikely(rhs == 0.0)) {
+					bool valid = false;
+					Variant tmp;
+					Variant::evaluate(Variant::OP_DIVIDE, *dst, *src, tmp, valid);
+#ifdef DEBUG_ENABLED
+					err_text = (tmp.get_type() == Variant::STRING) ? tmp.operator String() : String("Division by zero.");
+#endif
+					OPCODE_BREAK;
+				}
+
+				double lhs = *VariantInternal::get_float(dst);
+				*VariantInternal::get_float(dst) = lhs / rhs;
+
+				ip += 3;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_MOD_ASSIGN_INT) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(dst, 0);
+				GET_VARIANT_PTR(src, 1);
+
+				int64_t rhs = *VariantInternal::get_int(src);
+				if (unlikely(rhs == 0)) {
+					bool valid = false;
+					Variant tmp;
+					Variant::evaluate(Variant::OP_MODULE, *dst, *src, tmp, valid);
+#ifdef DEBUG_ENABLED
+					err_text = (tmp.get_type() == Variant::STRING) ? tmp.operator String() : String("Division by zero.");
+#endif
+					OPCODE_BREAK;
+				}
+
+				int64_t lhs = *VariantInternal::get_int(dst);
+				*VariantInternal::get_int(dst) = lhs % rhs;
+
+				ip += 3;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_INC_INT) {
+				CHECK_SPACE(2);
+
+				GET_VARIANT_PTR(dst, 0);
+				(*VariantInternal::get_int(dst))++;
+
+				ip += 2;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_DEC_INT) {
+				CHECK_SPACE(2);
+
+				GET_VARIANT_PTR(dst, 0);
+				(*VariantInternal::get_int(dst))--;
+
+				ip += 2;
 			}
 			DISPATCH_OPCODE;
 

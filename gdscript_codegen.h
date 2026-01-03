@@ -118,7 +118,9 @@ public:
 	virtual void write_assign_null(const Address &p_target) = 0;
 	virtual void write_assign_true(const Address &p_target) = 0;
 	virtual void write_assign_false(const Address &p_target) = 0;
-	virtual void write_add_sub_assign(const Address &p_target, const Address &p_source, Variant::Operator p_op) = 0;
+	virtual void write_arithmetic_assign(const Address &p_target, const Address &p_source, Variant::Operator p_op) = 0;
+	virtual void write_inc_int(const Address &p_target) = 0;
+	virtual void write_dec_int(const Address &p_target) = 0;
 	virtual void write_assign_default_parameter(const Address &dst, const Address &src, bool p_use_conversion) = 0;
 	virtual void write_store_global(const Address &p_dst, int p_global_index) = 0;
 	virtual void write_store_named_global(const Address &p_dst, const StringName &p_global) = 0;

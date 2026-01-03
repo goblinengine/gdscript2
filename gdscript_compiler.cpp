@@ -1388,15 +1388,36 @@ GDScriptCodeGenerator::Address GDScriptCompiler::_parse_expression(CodeGen &code
 				bool fused_op = false;
 				bool skip_final_assign = false;
 				if (has_operation && !is_member && !has_setter && !is_static &&
-						target.type.kind == GDScriptDataType::BUILTIN && assigned_value.type.kind == GDScriptDataType::BUILTIN &&
-						target.type.builtin_type == assigned_value.type.builtin_type &&
-						(target.type.builtin_type == Variant::INT || target.type.builtin_type == Variant::FLOAT) &&
-						(assignment->variant_op == Variant::OP_ADD || assignment->variant_op == Variant::OP_SUBTRACT)) {
-					codegen.generator->write_add_sub_assign(target, assigned_value, assignment->variant_op);
-					fused_op = true;
-					has_operation = false; // result already written into target.
-					to_assign = target;
-					skip_final_assign = true;
+					target.type.kind == GDScriptDataType::BUILTIN && assigned_value.type.kind == GDScriptDataType::BUILTIN &&
+					target.type.builtin_type == assigned_value.type.builtin_type &&
+					(target.type.builtin_type == Variant::INT || target.type.builtin_type == Variant::FLOAT)) {
+					// Prefer INC/DEC for common loop updates: x += 1 / x -= 1.
+					if (target.type.builtin_type == Variant::INT &&
+							(assignment->variant_op == Variant::OP_ADD || assignment->variant_op == Variant::OP_SUBTRACT) &&
+							assignment->assigned_value && assignment->assigned_value->type == GDScriptParser::Node::LITERAL) {
+						GDScriptParser::LiteralNode *lit = static_cast<GDScriptParser::LiteralNode *>(assignment->assigned_value);
+						if (lit->value.get_type() == Variant::INT && lit->value.operator int64_t() == 1) {
+							if (assignment->variant_op == Variant::OP_ADD) {
+								codegen.generator->write_inc_int(target);
+							} else {
+								codegen.generator->write_dec_int(target);
+							}
+							fused_op = true;
+							has_operation = false;
+							to_assign = target;
+							skip_final_assign = true;
+						}
+					}
+
+					if (!fused_op && (assignment->variant_op == Variant::OP_ADD || assignment->variant_op == Variant::OP_SUBTRACT ||
+								assignment->variant_op == Variant::OP_MULTIPLY || assignment->variant_op == Variant::OP_DIVIDE ||
+								assignment->variant_op == Variant::OP_MODULE)) {
+						codegen.generator->write_arithmetic_assign(target, assigned_value, assignment->variant_op);
+						fused_op = true;
+						has_operation = false; // result already written into target.
+						to_assign = target;
+						skip_final_assign = true;
+					}
 				}
 				if (has_operation) {
 					// Perform operation.
