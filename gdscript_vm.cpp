@@ -266,15 +266,24 @@ void (*type_init_function_table[])(Variant *) = {
 		&&OPCODE_SET_KEYED,                              \
 		&&OPCODE_SET_KEYED_VALIDATED,                    \
 		&&OPCODE_SET_INDEXED_VALIDATED,                  \
+		&&OPCODE_SET_INDEX_ARRAY_FAST,                   \
+		&&OPCODE_SET_INDEX_PACKED_FAST,                  \
+		&&OPCODE_SET_KEY_DICTIONARY_FAST,                \
 		&&OPCODE_GET_KEYED,                              \
 		&&OPCODE_GET_KEYED_VALIDATED,                    \
 		&&OPCODE_GET_INDEXED_VALIDATED,                  \
+		&&OPCODE_GET_INDEX_ARRAY_FAST,                   \
+		&&OPCODE_GET_INDEX_PACKED_FAST,                  \
+		&&OPCODE_GET_KEY_DICTIONARY_FAST,                \
+		&&OPCODE_HAS_KEY_DICTIONARY_FAST,                \
 		&&OPCODE_SET_NAMED,                              \
 		&&OPCODE_SET_NAMED_VALIDATED,                    \
 		&&OPCODE_GET_NAMED,                              \
 		&&OPCODE_GET_NAMED_VALIDATED,                    \
 		&&OPCODE_SET_MEMBER,                             \
 		&&OPCODE_GET_MEMBER,                             \
+		&&OPCODE_SET_MEMBER_FAST,                        \
+		&&OPCODE_GET_MEMBER_FAST,                        \
 		&&OPCODE_SET_STATIC_VARIABLE,                    \
 		&&OPCODE_GET_STATIC_VARIABLE,                    \
 		&&OPCODE_ASSIGN,                                 \
@@ -1107,6 +1116,232 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 			}
 			DISPATCH_OPCODE;
 
+			OPCODE(OPCODE_SET_INDEX_ARRAY_FAST) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(dst, 0);
+				GET_VARIANT_PTR(index, 1);
+				GET_VARIANT_PTR(value, 2);
+
+				Array *array = VariantInternal::get_array(dst);
+				int64_t int_index = *VariantInternal::get_int(index);
+
+				if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+					String v = index->operator String();
+					if (!v.is_empty()) {
+						v = "'" + v + "'";
+					} else {
+						v = "of type '" + _get_var_type(index) + "'";
+					}
+					err_text = "Out of bounds set index " + v + " (on base: '" + _get_var_type(dst) + "')";
+					OPCODE_BREAK;
+#else
+					ip += 4;
+					DISPATCH_OPCODE;
+#endif
+				}
+
+				array->set((int)int_index, *value);
+				ip += 4;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_SET_INDEX_PACKED_FAST) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(dst, 0);
+				GET_VARIANT_PTR(index, 1);
+				GET_VARIANT_PTR(value, 2);
+
+				int64_t int_index = *VariantInternal::get_int(index);
+
+				switch (dst->get_type()) {
+					case Variant::PACKED_BYTE_ARRAY: {
+						Vector<uint8_t> *array = VariantInternal::get_byte_array(dst);
+						int64_t v = *VariantInternal::get_int(value);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds set index (PackedByteArray).";
+							OPCODE_BREAK;
+#else
+							break;
+#endif
+						}
+#ifdef DEBUG_ENABLED
+						if (unlikely(v < 0 || v > 255)) {
+							err_text = "Invalid value for PackedByteArray element (expected 0..255).";
+							OPCODE_BREAK;
+						}
+#endif
+						array->set((int)int_index, (uint8_t)v);
+					} break;
+					case Variant::PACKED_INT32_ARRAY: {
+						Vector<int32_t> *array = VariantInternal::get_int32_array(dst);
+						int64_t v = *VariantInternal::get_int(value);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds set index (PackedInt32Array).";
+							OPCODE_BREAK;
+#else
+							break;
+#endif
+						}
+#ifdef DEBUG_ENABLED
+						if (unlikely(v < INT32_MIN || v > INT32_MAX)) {
+							err_text = "Invalid value for PackedInt32Array element (out of int32 range).";
+							OPCODE_BREAK;
+						}
+#endif
+						array->set((int)int_index, (int32_t)v);
+					} break;
+					case Variant::PACKED_INT64_ARRAY: {
+						Vector<int64_t> *array = VariantInternal::get_int64_array(dst);
+						int64_t v = *VariantInternal::get_int(value);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds set index (PackedInt64Array).";
+							OPCODE_BREAK;
+#else
+							break;
+#endif
+						}
+						array->set((int)int_index, v);
+					} break;
+					case Variant::PACKED_FLOAT32_ARRAY: {
+						Vector<float> *array = VariantInternal::get_float32_array(dst);
+						double v = *VariantInternal::get_float(value);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds set index (PackedFloat32Array).";
+							OPCODE_BREAK;
+#else
+							break;
+#endif
+						}
+						array->set((int)int_index, (float)v);
+					} break;
+					case Variant::PACKED_FLOAT64_ARRAY: {
+						Vector<double> *array = VariantInternal::get_float64_array(dst);
+						double v = *VariantInternal::get_float(value);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds set index (PackedFloat64Array).";
+							OPCODE_BREAK;
+#else
+							break;
+#endif
+						}
+						array->set((int)int_index, v);
+					} break;
+					case Variant::PACKED_STRING_ARRAY: {
+						Vector<String> *array = VariantInternal::get_string_array(dst);
+						String v = *VariantInternal::get_string(value);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds set index (PackedStringArray).";
+							OPCODE_BREAK;
+#else
+							break;
+#endif
+						}
+						array->set((int)int_index, v);
+					} break;
+					case Variant::PACKED_VECTOR2_ARRAY: {
+						Vector<Vector2> *array = VariantInternal::get_vector2_array(dst);
+						Vector2 v = *VariantInternal::get_vector2(value);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds set index (PackedVector2Array).";
+							OPCODE_BREAK;
+#else
+							break;
+#endif
+						}
+						array->set((int)int_index, v);
+					} break;
+					case Variant::PACKED_VECTOR3_ARRAY: {
+						Vector<Vector3> *array = VariantInternal::get_vector3_array(dst);
+						Vector3 v = *VariantInternal::get_vector3(value);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds set index (PackedVector3Array).";
+							OPCODE_BREAK;
+#else
+							break;
+#endif
+						}
+						array->set((int)int_index, v);
+					} break;
+					case Variant::PACKED_VECTOR4_ARRAY: {
+						Vector<Vector4> *array = VariantInternal::get_vector4_array(dst);
+						Vector4 v = *VariantInternal::get_vector4(value);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds set index (PackedVector4Array).";
+							OPCODE_BREAK;
+#else
+							break;
+#endif
+						}
+						array->set((int)int_index, v);
+					} break;
+					case Variant::PACKED_COLOR_ARRAY: {
+						Vector<Color> *array = VariantInternal::get_color_array(dst);
+						Color v = *VariantInternal::get_color(value);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds set index (PackedColorArray).";
+							OPCODE_BREAK;
+#else
+							break;
+#endif
+						}
+						array->set((int)int_index, v);
+					} break;
+					default: {
+						// Should not happen (emitted only for packed arrays).
+#ifdef DEBUG_ENABLED
+						err_text = "Invalid base for SET_INDEX_PACKED_FAST.";
+						OPCODE_BREAK;
+#endif
+					} break;
+				}
+
+				ip += 4;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_SET_KEY_DICTIONARY_FAST) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(dst, 0);
+				GET_VARIANT_PTR(key, 1);
+				GET_VARIANT_PTR(value, 2);
+
+				Dictionary *dict = VariantInternal::get_dictionary(dst);
+				bool ok = dict->set(*key, *value);
+
+#ifdef DEBUG_ENABLED
+				if (!ok) {
+					if (dst->is_read_only()) {
+						err_text = "Invalid assignment on read-only value (on base: '" + _get_var_type(dst) + "').";
+					} else {
+						String v = key->operator String();
+						if (!v.is_empty()) {
+							v = "'" + v + "'";
+						} else {
+							v = "of type '" + _get_var_type(key) + "'";
+						}
+						err_text = "Invalid assignment of key " + v + " with value of type '" + _get_var_type(value) + "' on a base object of type '" + _get_var_type(dst) + "'.";
+					}
+					OPCODE_BREAK;
+				}
+#endif
+				ip += 4;
+			}
+			DISPATCH_OPCODE;
+
 			OPCODE(OPCODE_GET_KEYED) {
 				CHECK_SPACE(3);
 
@@ -1208,6 +1443,244 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 				}
 #endif
 				ip += 5;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_GET_INDEX_ARRAY_FAST) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(src, 0);
+				GET_VARIANT_PTR(index, 1);
+				GET_VARIANT_PTR(dst, 2);
+
+				Array *array = VariantInternal::get_array(src);
+				int64_t int_index = *VariantInternal::get_int(index);
+
+				if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+					String v = index->operator String();
+					if (!v.is_empty()) {
+						v = "'" + v + "'";
+					} else {
+						v = "of type '" + _get_var_type(index) + "'";
+					}
+					err_text = "Out of bounds get index " + v + " (on base: '" + _get_var_type(src) + "')";
+					OPCODE_BREAK;
+#else
+					*dst = Variant();
+					ip += 4;
+					DISPATCH_OPCODE;
+#endif
+				}
+
+				*dst = array->get((int)int_index);
+				ip += 4;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_GET_INDEX_PACKED_FAST) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(src, 0);
+				GET_VARIANT_PTR(index, 1);
+				GET_VARIANT_PTR(dst, 2);
+
+				int64_t int_index = *VariantInternal::get_int(index);
+
+				switch (src->get_type()) {
+					case Variant::PACKED_BYTE_ARRAY: {
+						const Vector<uint8_t> *array = VariantInternal::get_byte_array((const Variant *)src);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds get index (PackedByteArray).";
+							OPCODE_BREAK;
+#else
+							*dst = Variant();
+							break;
+#endif
+						}
+						VariantInternal::initialize(dst, Variant::INT);
+						*VariantInternal::get_int(dst) = array->get((int)int_index);
+					} break;
+					case Variant::PACKED_INT32_ARRAY: {
+						const Vector<int32_t> *array = VariantInternal::get_int32_array((const Variant *)src);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds get index (PackedInt32Array).";
+							OPCODE_BREAK;
+#else
+							*dst = Variant();
+							break;
+#endif
+						}
+						VariantInternal::initialize(dst, Variant::INT);
+						*VariantInternal::get_int(dst) = array->get((int)int_index);
+					} break;
+					case Variant::PACKED_INT64_ARRAY: {
+						const Vector<int64_t> *array = VariantInternal::get_int64_array((const Variant *)src);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds get index (PackedInt64Array).";
+							OPCODE_BREAK;
+#else
+							*dst = Variant();
+							break;
+#endif
+						}
+						VariantInternal::initialize(dst, Variant::INT);
+						*VariantInternal::get_int(dst) = array->get((int)int_index);
+					} break;
+					case Variant::PACKED_FLOAT32_ARRAY: {
+						const Vector<float> *array = VariantInternal::get_float32_array((const Variant *)src);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds get index (PackedFloat32Array).";
+							OPCODE_BREAK;
+#else
+							*dst = Variant();
+							break;
+#endif
+						}
+						VariantInternal::initialize(dst, Variant::FLOAT);
+						*VariantInternal::get_float(dst) = array->get((int)int_index);
+					} break;
+					case Variant::PACKED_FLOAT64_ARRAY: {
+						const Vector<double> *array = VariantInternal::get_float64_array((const Variant *)src);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds get index (PackedFloat64Array).";
+							OPCODE_BREAK;
+#else
+							*dst = Variant();
+							break;
+#endif
+						}
+						VariantInternal::initialize(dst, Variant::FLOAT);
+						*VariantInternal::get_float(dst) = array->get((int)int_index);
+					} break;
+					case Variant::PACKED_STRING_ARRAY: {
+						const Vector<String> *array = VariantInternal::get_string_array((const Variant *)src);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds get index (PackedStringArray).";
+							OPCODE_BREAK;
+#else
+							*dst = Variant();
+							break;
+#endif
+						}
+						VariantInternal::initialize(dst, Variant::STRING);
+						*VariantInternal::get_string(dst) = array->get((int)int_index);
+					} break;
+					case Variant::PACKED_VECTOR2_ARRAY: {
+						const Vector<Vector2> *array = VariantInternal::get_vector2_array((const Variant *)src);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds get index (PackedVector2Array).";
+							OPCODE_BREAK;
+#else
+							*dst = Variant();
+							break;
+#endif
+						}
+						VariantInternal::initialize(dst, Variant::VECTOR2);
+						*VariantInternal::get_vector2(dst) = array->get((int)int_index);
+					} break;
+					case Variant::PACKED_VECTOR3_ARRAY: {
+						const Vector<Vector3> *array = VariantInternal::get_vector3_array((const Variant *)src);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds get index (PackedVector3Array).";
+							OPCODE_BREAK;
+#else
+							*dst = Variant();
+							break;
+#endif
+						}
+						VariantInternal::initialize(dst, Variant::VECTOR3);
+						*VariantInternal::get_vector3(dst) = array->get((int)int_index);
+					} break;
+					case Variant::PACKED_VECTOR4_ARRAY: {
+						const Vector<Vector4> *array = VariantInternal::get_vector4_array((const Variant *)src);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds get index (PackedVector4Array).";
+							OPCODE_BREAK;
+#else
+							*dst = Variant();
+							break;
+#endif
+						}
+						VariantInternal::initialize(dst, Variant::VECTOR4);
+						*VariantInternal::get_vector4(dst) = array->get((int)int_index);
+					} break;
+					case Variant::PACKED_COLOR_ARRAY: {
+						const Vector<Color> *array = VariantInternal::get_color_array((const Variant *)src);
+						if (unlikely(int_index < 0 || int_index >= array->size())) {
+#ifdef DEBUG_ENABLED
+							err_text = "Out of bounds get index (PackedColorArray).";
+							OPCODE_BREAK;
+#else
+							*dst = Variant();
+							break;
+#endif
+						}
+						VariantInternal::initialize(dst, Variant::COLOR);
+						*VariantInternal::get_color(dst) = array->get((int)int_index);
+					} break;
+					default: {
+#ifdef DEBUG_ENABLED
+						err_text = "Invalid base for GET_INDEX_PACKED_FAST.";
+						OPCODE_BREAK;
+#endif
+					} break;
+				}
+
+				ip += 4;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_GET_KEY_DICTIONARY_FAST) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(src, 0);
+				GET_VARIANT_PTR(key, 1);
+				GET_VARIANT_PTR(dst, 2);
+
+				Dictionary *dict = VariantInternal::get_dictionary(src);
+				const Variant *ptr = dict->getptr(*key);
+				if (unlikely(ptr == nullptr)) {
+#ifdef DEBUG_ENABLED
+					String v = key->operator String();
+					if (!v.is_empty()) {
+						v = "'" + v + "'";
+					} else {
+						v = "of type '" + _get_var_type(key) + "'";
+					}
+					err_text = "Invalid access to key " + v + " on a base object of type '" + _get_var_type(src) + "'.";
+					OPCODE_BREAK;
+#else
+					*dst = Variant();
+					ip += 4;
+					DISPATCH_OPCODE;
+#endif
+				}
+
+				*dst = *ptr;
+				ip += 4;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_HAS_KEY_DICTIONARY_FAST) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(src, 0);
+				GET_VARIANT_PTR(key, 1);
+				GET_VARIANT_PTR(dst, 2);
+
+				Dictionary *dict = VariantInternal::get_dictionary(src);
+				*dst = dict->has(*key);
+				ip += 4;
 			}
 			DISPATCH_OPCODE;
 
@@ -1667,6 +2140,181 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 	#endif
 				}
 
+				ip += 3 + (k_inline_cache_pic_size * k_inline_cache_ptr_slots * 2);
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_SET_MEMBER_FAST) {
+				// Self property set, PIC-only (no generic fallback).
+				constexpr int _cache_args = 3 + (k_inline_cache_pic_size * k_inline_cache_ptr_slots * 2);
+				CHECK_SPACE(_cache_args);
+				GET_VARIANT_PTR(src, 0);
+				int indexname = _code_ptr[ip + 2];
+				GD_ERR_BREAK(indexname < 0 || indexname >= _global_names_count);
+				const StringName *index = &_global_names_ptr[indexname];
+
+				bool valid = false;
+				bool used_fast_path = false;
+
+				if (p_instance && p_instance->owner) {
+					Object *obj = p_instance->owner;
+					ClassDB::ClassInfo **cached_class_slot = reinterpret_cast<ClassDB::ClassInfo **>(&_code_ptr[ip + 3]);
+					ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 3 + k_inline_cache_pic_size * k_inline_cache_ptr_slots]);
+
+					ClassDB::ClassInfo *info = ClassDB::classes.getptr(obj->get_class_name());
+					ClassDB::PropertySetGet *psg = nullptr;
+					int hit_slot = -1;
+
+					for (int i = 0; i < k_inline_cache_pic_size; i++) {
+						if (cached_class_slot[i] == info) {
+							psg = cached_psg_slot[i];
+							hit_slot = i;
+							break;
+						}
+					}
+
+					if (hit_slot == -1 && info) {
+						ClassDB::ClassInfo *check = info;
+						while (check) {
+							psg = const_cast<ClassDB::PropertySetGet *>(check->property_setget.getptr(*index));
+							if (psg) {
+								break;
+							}
+							check = check->inherits_ptr;
+						}
+						int store_slot = -1;
+						for (int i = 0; i < k_inline_cache_pic_size; i++) {
+							if (cached_class_slot[i] == nullptr) {
+								store_slot = i;
+								break;
+							}
+						}
+						if (store_slot == -1) {
+							store_slot = 0;
+						}
+						cached_class_slot[store_slot] = info;
+						cached_psg_slot[store_slot] = psg;
+						if (psg) {
+							hit_slot = store_slot;
+						}
+					}
+
+					if (hit_slot != -1 && psg) {
+						Callable::CallError ce;
+						if (psg->index >= 0) {
+							Variant boxed_index = psg->index;
+							const Variant *arg[2] = { &boxed_index, src };
+							if (psg->_setptr) {
+								psg->_setptr->call(obj, arg, 2, ce);
+							} else {
+								obj->callp(psg->setter, arg, 2, ce);
+							}
+						} else {
+							const Variant *arg[1] = { src };
+							if (psg->_setptr) {
+								psg->_setptr->call(obj, arg, 1, ce);
+							} else {
+								obj->callp(psg->setter, arg, 1, ce);
+							}
+						}
+						valid = ce.error == Callable::CallError::CALL_OK;
+						used_fast_path = true;
+					}
+				}
+
+#ifdef DEBUG_ENABLED
+				if (!used_fast_path || !valid) {
+					err_text = "Error setting property '" + String(*index) + "' with value of type " + Variant::get_type_name(src->get_type()) + ".";
+					OPCODE_BREAK;
+				}
+#endif
+				ip += 3 + (k_inline_cache_pic_size * k_inline_cache_ptr_slots * 2);
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_GET_MEMBER_FAST) {
+				// Self property get, PIC-only (no generic fallback).
+				constexpr int _cache_args = 3 + (k_inline_cache_pic_size * k_inline_cache_ptr_slots * 2);
+				CHECK_SPACE(_cache_args);
+				GET_VARIANT_PTR(dst, 0);
+				int indexname = _code_ptr[ip + 2];
+				GD_ERR_BREAK(indexname < 0 || indexname >= _global_names_count);
+				const StringName *index = &_global_names_ptr[indexname];
+
+				bool valid = false;
+				bool used_fast_path = false;
+
+				if (p_instance && p_instance->owner) {
+					Object *obj = p_instance->owner;
+					ClassDB::ClassInfo **cached_class_slot = reinterpret_cast<ClassDB::ClassInfo **>(&_code_ptr[ip + 3]);
+					ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 3 + k_inline_cache_pic_size * k_inline_cache_ptr_slots]);
+
+					ClassDB::ClassInfo *info = ClassDB::classes.getptr(obj->get_class_name());
+					ClassDB::PropertySetGet *psg = nullptr;
+					int hit_slot = -1;
+
+					for (int i = 0; i < k_inline_cache_pic_size; i++) {
+						if (cached_class_slot[i] == info) {
+							psg = cached_psg_slot[i];
+							hit_slot = i;
+							break;
+						}
+					}
+
+					if (hit_slot == -1 && info) {
+						ClassDB::ClassInfo *check = info;
+						while (check) {
+							psg = const_cast<ClassDB::PropertySetGet *>(check->property_setget.getptr(*index));
+							if (psg) {
+								break;
+							}
+							check = check->inherits_ptr;
+						}
+						int store_slot = -1;
+						for (int i = 0; i < k_inline_cache_pic_size; i++) {
+							if (cached_class_slot[i] == nullptr) {
+								store_slot = i;
+								break;
+							}
+						}
+						if (store_slot == -1) {
+							store_slot = 0;
+						}
+						cached_class_slot[store_slot] = info;
+						cached_psg_slot[store_slot] = psg;
+						if (psg) {
+							hit_slot = store_slot;
+						}
+					}
+
+					if (hit_slot != -1 && psg) {
+						Callable::CallError ce;
+						Variant ret;
+						if (psg->index >= 0) {
+							Variant boxed_index = psg->index;
+							const Variant *arg[1] = { &boxed_index };
+							ret = obj->callp(psg->getter, arg, 1, ce);
+						} else {
+							if (psg->_getptr) {
+								ret = psg->_getptr->call(obj, nullptr, 0, ce);
+							} else {
+								ret = obj->callp(psg->getter, nullptr, 0, ce);
+							}
+						}
+						valid = ce.error == Callable::CallError::CALL_OK;
+						if (valid) {
+							*dst = ret;
+						}
+						used_fast_path = true;
+					}
+				}
+
+#ifdef DEBUG_ENABLED
+				if (!used_fast_path || !valid) {
+					err_text = "Error getting property '" + String(*index) + "'.";
+					OPCODE_BREAK;
+				}
+#endif
 				ip += 3 + (k_inline_cache_pic_size * k_inline_cache_ptr_slots * 2);
 			}
 			DISPATCH_OPCODE;

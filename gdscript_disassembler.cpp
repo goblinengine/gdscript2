@@ -271,6 +271,36 @@ void GDScriptFunction::disassemble(const Vector<String> &p_code_lines) const {
 
 				incr += 5;
 			} break;
+			case OPCODE_SET_INDEX_ARRAY_FAST: {
+				text += "set index array fast ";
+				text += DADDR(1);
+				text += "[";
+				text += DADDR(2);
+				text += "] = ";
+				text += DADDR(3);
+
+				incr += 4;
+			} break;
+			case OPCODE_SET_INDEX_PACKED_FAST: {
+				text += "set index packed fast ";
+				text += DADDR(1);
+				text += "[";
+				text += DADDR(2);
+				text += "] = ";
+				text += DADDR(3);
+
+				incr += 4;
+			} break;
+			case OPCODE_SET_KEY_DICTIONARY_FAST: {
+				text += "set key dictionary fast ";
+				text += DADDR(1);
+				text += "[";
+				text += DADDR(2);
+				text += "] = ";
+				text += DADDR(3);
+
+				incr += 4;
+			} break;
 			case OPCODE_GET_KEYED: {
 				text += "get keyed ";
 				text += DADDR(3);
@@ -303,6 +333,50 @@ void GDScriptFunction::disassemble(const Vector<String> &p_code_lines) const {
 				text += "]";
 
 				incr += 5;
+			} break;
+			case OPCODE_GET_INDEX_ARRAY_FAST: {
+				text += "get index array fast ";
+				text += DADDR(3);
+				text += " = ";
+				text += DADDR(1);
+				text += "[";
+				text += DADDR(2);
+				text += "]";
+
+				incr += 4;
+			} break;
+			case OPCODE_GET_INDEX_PACKED_FAST: {
+				text += "get index packed fast ";
+				text += DADDR(3);
+				text += " = ";
+				text += DADDR(1);
+				text += "[";
+				text += DADDR(2);
+				text += "]";
+
+				incr += 4;
+			} break;
+			case OPCODE_GET_KEY_DICTIONARY_FAST: {
+				text += "get key dictionary fast ";
+				text += DADDR(3);
+				text += " = ";
+				text += DADDR(1);
+				text += "[";
+				text += DADDR(2);
+				text += "]";
+
+				incr += 4;
+			} break;
+			case OPCODE_HAS_KEY_DICTIONARY_FAST: {
+				text += "has key dictionary fast ";
+				text += DADDR(3);
+				text += " = ";
+				text += DADDR(1);
+				text += ".has(";
+				text += DADDR(2);
+				text += ")";
+
+				incr += 4;
 			} break;
 			case OPCODE_SET_NAMED: {
 				text += "set_named ";
@@ -357,6 +431,25 @@ void GDScriptFunction::disassemble(const Vector<String> &p_code_lines) const {
 			} break;
 			case OPCODE_GET_MEMBER: {
 				text += "get_member ";
+				text += DADDR(1);
+				text += " = ";
+				text += "[\"";
+				text += _global_names_ptr[_code_ptr[ip + 2]];
+				text += "\"]";
+
+				incr += 3 + (_inline_cache_ptr_slots * 2 * _inline_cache_pic_size);
+			} break;
+			case OPCODE_SET_MEMBER_FAST: {
+				text += "set_member_fast ";
+				text += "[\"";
+				text += _global_names_ptr[_code_ptr[ip + 2]];
+				text += "\"] = ";
+				text += DADDR(1);
+
+				incr += 3 + (_inline_cache_ptr_slots * 2 * _inline_cache_pic_size);
+			} break;
+			case OPCODE_GET_MEMBER_FAST: {
+				text += "get_member_fast ";
 				text += DADDR(1);
 				text += " = ";
 				text += "[\"";

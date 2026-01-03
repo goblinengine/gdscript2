@@ -788,6 +788,46 @@ void GDScriptByteCodeGenerator::write_end_ternary() {
 
 void GDScriptByteCodeGenerator::write_set(const Address &p_target, const Address &p_index, const Address &p_source) {
 	if (HAS_BUILTIN_TYPE(p_target)) {
+		if (p_target.type.builtin_type == Variant::ARRAY && IS_BUILTIN_TYPE(p_index, Variant::INT)) {
+			append_opcode(GDScriptFunction::OPCODE_SET_INDEX_ARRAY_FAST);
+			append(p_target);
+			append(p_index);
+			append(p_source);
+			return;
+		}
+		if (p_target.type.builtin_type == Variant::DICTIONARY) {
+			append_opcode(GDScriptFunction::OPCODE_SET_KEY_DICTIONARY_FAST);
+			append(p_target);
+			append(p_index);
+			append(p_source);
+			return;
+		}
+		bool is_packed_array = false;
+		switch (p_target.type.builtin_type) {
+			case Variant::PACKED_BYTE_ARRAY:
+			case Variant::PACKED_INT32_ARRAY:
+			case Variant::PACKED_INT64_ARRAY:
+			case Variant::PACKED_FLOAT32_ARRAY:
+			case Variant::PACKED_FLOAT64_ARRAY:
+			case Variant::PACKED_STRING_ARRAY:
+			case Variant::PACKED_VECTOR2_ARRAY:
+			case Variant::PACKED_VECTOR3_ARRAY:
+			case Variant::PACKED_COLOR_ARRAY:
+			case Variant::PACKED_VECTOR4_ARRAY:
+				is_packed_array = true;
+				break;
+			default:
+				break;
+		}
+		if (IS_BUILTIN_TYPE(p_index, Variant::INT) && is_packed_array &&
+				IS_BUILTIN_TYPE(p_source, Variant::get_indexed_element_type(p_target.type.builtin_type))) {
+			append_opcode(GDScriptFunction::OPCODE_SET_INDEX_PACKED_FAST);
+			append(p_target);
+			append(p_index);
+			append(p_source);
+			return;
+		}
+
 		if (IS_BUILTIN_TYPE(p_index, Variant::INT) && Variant::get_member_validated_indexed_setter(p_target.type.builtin_type) &&
 				IS_BUILTIN_TYPE(p_source, Variant::get_indexed_element_type(p_target.type.builtin_type))) {
 			// Use indexed setter instead.
@@ -817,6 +857,45 @@ void GDScriptByteCodeGenerator::write_set(const Address &p_target, const Address
 
 void GDScriptByteCodeGenerator::write_get(const Address &p_target, const Address &p_index, const Address &p_source) {
 	if (HAS_BUILTIN_TYPE(p_source)) {
+		if (p_source.type.builtin_type == Variant::ARRAY && IS_BUILTIN_TYPE(p_index, Variant::INT)) {
+			append_opcode(GDScriptFunction::OPCODE_GET_INDEX_ARRAY_FAST);
+			append(p_source);
+			append(p_index);
+			append(p_target);
+			return;
+		}
+		if (p_source.type.builtin_type == Variant::DICTIONARY) {
+			append_opcode(GDScriptFunction::OPCODE_GET_KEY_DICTIONARY_FAST);
+			append(p_source);
+			append(p_index);
+			append(p_target);
+			return;
+		}
+		bool is_packed_array = false;
+		switch (p_source.type.builtin_type) {
+			case Variant::PACKED_BYTE_ARRAY:
+			case Variant::PACKED_INT32_ARRAY:
+			case Variant::PACKED_INT64_ARRAY:
+			case Variant::PACKED_FLOAT32_ARRAY:
+			case Variant::PACKED_FLOAT64_ARRAY:
+			case Variant::PACKED_STRING_ARRAY:
+			case Variant::PACKED_VECTOR2_ARRAY:
+			case Variant::PACKED_VECTOR3_ARRAY:
+			case Variant::PACKED_COLOR_ARRAY:
+			case Variant::PACKED_VECTOR4_ARRAY:
+				is_packed_array = true;
+				break;
+			default:
+				break;
+		}
+		if (IS_BUILTIN_TYPE(p_index, Variant::INT) && is_packed_array) {
+			append_opcode(GDScriptFunction::OPCODE_GET_INDEX_PACKED_FAST);
+			append(p_source);
+			append(p_index);
+			append(p_target);
+			return;
+		}
+
 		if (IS_BUILTIN_TYPE(p_index, Variant::INT) && Variant::get_member_validated_indexed_getter(p_source.type.builtin_type)) {
 			// Use indexed getter instead.
 			Variant::ValidatedIndexedGetter getter = Variant::get_member_validated_indexed_getter(p_source.type.builtin_type);
@@ -890,7 +969,7 @@ void GDScriptByteCodeGenerator::write_get_named(const Address &p_target, const S
 }
 
 void GDScriptByteCodeGenerator::write_set_member(const Address &p_value, const StringName &p_name) {
-	append_opcode(GDScriptFunction::OPCODE_SET_MEMBER);
+	append_opcode(GDScriptFunction::OPCODE_SET_MEMBER_FAST);
 	append(p_value);
 	append(p_name);
 	constexpr int _ptr_slots = sizeof(void *) / sizeof(int);
@@ -901,7 +980,7 @@ void GDScriptByteCodeGenerator::write_set_member(const Address &p_value, const S
 }
 
 void GDScriptByteCodeGenerator::write_get_member(const Address &p_target, const StringName &p_name) {
-	append_opcode(GDScriptFunction::OPCODE_GET_MEMBER);
+	append_opcode(GDScriptFunction::OPCODE_GET_MEMBER_FAST);
 	append(p_target);
 	append(p_name);
 	constexpr int _ptr_slots = sizeof(void *) / sizeof(int);
