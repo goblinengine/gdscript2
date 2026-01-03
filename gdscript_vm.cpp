@@ -37,6 +37,7 @@
 #include "core/os/os.h"
 #include "core/profiling/profiling.h"
 
+#include <atomic>
 #ifdef DEBUG_ENABLED
 
 static bool _profile_count_as_native(const Object *p_base_obj, const StringName &p_methodname) {
@@ -502,6 +503,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 
 	constexpr int k_inline_cache_ptr_slots = sizeof(void *) / sizeof(int);
 	static_assert(sizeof(void *) % sizeof(int) == 0, "Pointer size must be divisible by int size for inline caches.");
+	constexpr int k_inline_cache_pic_size = 4; // Small polymorphic inline cache.
 
 	OPCODES_TABLE;
 
@@ -778,33 +780,30 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 
 				// Check if this is the first run. If so, store the current signature for the optimized path.
 				if (unlikely(op_signature == 0)) {
-					static Mutex initializer_mutex;
-					initializer_mutex.lock();
 					Variant::Type a_type = (Variant::Type)((actual_signature >> 8) & 0xFF);
 					Variant::Type b_type = (Variant::Type)(actual_signature & 0xFF);
 
 					Variant::ValidatedOperatorEvaluator op_func = Variant::get_validated_operator_evaluator(op, a_type, b_type);
 
 					if (unlikely(!op_func)) {
-#ifdef DEBUG_ENABLED
+	#ifdef DEBUG_ENABLED
 						err_text = "Invalid operands '" + Variant::get_type_name(a->get_type()) + "' and '" + Variant::get_type_name(b->get_type()) + "' in operator '" + Variant::get_operator_name(op) + "'.";
-#endif
-						initializer_mutex.unlock();
+	#endif
 						OPCODE_BREAK;
 					} else {
 						Variant::Type ret_type = Variant::get_operator_return_type(op, a_type, b_type);
 						VariantInternal::initialize(dst, ret_type);
 						op_func(a, b, dst);
 
-						// Check again in case another thread already set it.
-						if (_code_ptr[ip + 5] == 0) {
-							_code_ptr[ip + 5] = actual_signature;
+						// Attempt to publish the cached evaluator atomically to avoid contention.
+						std::atomic<int> *sig_slot = reinterpret_cast<std::atomic<int> *>(&_code_ptr[ip + 5]);
+						int expected_zero = 0;
+						if (sig_slot->compare_exchange_strong(expected_zero, (int)actual_signature, std::memory_order_release, std::memory_order_relaxed)) {
 							_code_ptr[ip + 6] = static_cast<int>(ret_type);
 							Variant::ValidatedOperatorEvaluator *tmp = reinterpret_cast<Variant::ValidatedOperatorEvaluator *>(&_code_ptr[ip + 7]);
 							*tmp = op_func;
 						}
 					}
-					initializer_mutex.unlock();
 				} else if (likely(op_signature == actual_signature)) {
 					// If the signature matches, we can use the optimized path.
 					Variant::Type ret_type = static_cast<Variant::Type>(_code_ptr[ip + 6]);
@@ -1201,7 +1200,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 			DISPATCH_OPCODE;
 
 			OPCODE(OPCODE_SET_NAMED) {
-				constexpr int _cache_args = 3 + (k_inline_cache_ptr_slots * 2);
+				constexpr int _cache_args = 3 + (k_inline_cache_pic_size * k_inline_cache_ptr_slots * 2);
 				CHECK_SPACE(_cache_args);
 
 				GET_VARIANT_PTR(dst, 0);
@@ -1223,46 +1222,69 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					}
 					if (obj) {
 						ClassDB::ClassInfo **cached_class_slot = reinterpret_cast<ClassDB::ClassInfo **>(&_code_ptr[ip + 4]);
-						ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 4 + k_inline_cache_ptr_slots]);
+						ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 4 + k_inline_cache_pic_size * k_inline_cache_ptr_slots]);
 
 						ClassDB::ClassInfo *info = ClassDB::classes.getptr(obj->get_class_name());
 						ClassDB::PropertySetGet *psg = nullptr;
 
-						if (*cached_class_slot == info && *cached_psg_slot) {
-							psg = *cached_psg_slot;
-						} else {
+						int hit_slot = -1;
+						for (int i = 0; i < k_inline_cache_pic_size; i++) {
+							if (cached_class_slot[i] == info) {
+								psg = cached_psg_slot[i];
+								hit_slot = i;
+								break;
+							}
+						}
+
+						if (hit_slot == -1 && info) {
 							ClassDB::ClassInfo *check = info;
 							while (check) {
 								psg = const_cast<ClassDB::PropertySetGet *>(check->property_setget.getptr(*index));
 								if (psg) {
-									*cached_class_slot = info;
-									*cached_psg_slot = psg;
 									break;
 								}
 								check = check->inherits_ptr;
 							}
-						}
 
-						if (psg) {
-							Callable::CallError ce;
-							if (psg->index >= 0) {
-								Variant idx = psg->index;
-								const Variant *arg[2] = { &idx, value };
-								if (psg->_setptr) {
-									psg->_setptr->call(obj, arg, 2, ce);
-								} else {
-									obj->callp(psg->setter, arg, 2, ce);
-								}
-							} else {
-								const Variant *arg[1] = { value };
-								if (psg->_setptr) {
-									psg->_setptr->call(obj, arg, 1, ce);
-								} else {
-									obj->callp(psg->setter, arg, 1, ce);
+							int store_slot = -1;
+							for (int i = 0; i < k_inline_cache_pic_size; i++) {
+								if (cached_class_slot[i] == nullptr) {
+									store_slot = i;
+									break;
 								}
 							}
-							valid = ce.error == Callable::CallError::CALL_OK;
-							used_fast_path = true;
+							if (store_slot == -1) {
+								store_slot = 0; // simple eviction
+							}
+							cached_class_slot[store_slot] = info;
+							cached_psg_slot[store_slot] = psg; // may be nullptr for negative caching
+							if (psg) {
+								hit_slot = store_slot;
+							}
+						}
+
+						if (hit_slot != -1) {
+							if (psg) {
+								Callable::CallError ce;
+								if (psg->index >= 0) {
+									Variant boxed_index = psg->index;
+									const Variant *arg[2] = { &boxed_index, value };
+									if (psg->_setptr) {
+										psg->_setptr->call(obj, arg, 2, ce);
+									} else {
+										obj->callp(psg->setter, arg, 2, ce);
+									}
+								} else {
+									const Variant *arg[1] = { value };
+									if (psg->_setptr) {
+										psg->_setptr->call(obj, arg, 1, ce);
+									} else {
+										obj->callp(psg->setter, arg, 1, ce);
+									}
+								}
+								valid = ce.error == Callable::CallError::CALL_OK;
+							}
+							used_fast_path = true; // includes negative cache hit
 						}
 					}
 				}
@@ -1290,7 +1312,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					OPCODE_BREAK;
 				}
 	#endif
-				ip += 4 + (k_inline_cache_ptr_slots * 2);
+				ip += 4 + (k_inline_cache_pic_size * k_inline_cache_ptr_slots * 2);
 			}
 			DISPATCH_OPCODE;
 
@@ -1310,7 +1332,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 			DISPATCH_OPCODE;
 
 			OPCODE(OPCODE_GET_NAMED) {
-				constexpr int _cache_args = 4 + (k_inline_cache_ptr_slots * 2);
+				constexpr int _cache_args = 4 + (k_inline_cache_pic_size * k_inline_cache_ptr_slots * 2);
 				CHECK_SPACE(_cache_args);
 
 				GET_VARIANT_PTR(src, 0);
@@ -1333,43 +1355,66 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					}
 					if (obj) {
 						ClassDB::ClassInfo **cached_class_slot = reinterpret_cast<ClassDB::ClassInfo **>(&_code_ptr[ip + 4]);
-						ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 4 + k_inline_cache_ptr_slots]);
+						ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 4 + k_inline_cache_pic_size * k_inline_cache_ptr_slots]);
 
 						ClassDB::ClassInfo *info = ClassDB::classes.getptr(obj->get_class_name());
 						ClassDB::PropertySetGet *psg = nullptr;
+						int hit_slot = -1;
 
-						if (*cached_class_slot == info && *cached_psg_slot) {
-							psg = *cached_psg_slot;
-						} else {
+						for (int i = 0; i < k_inline_cache_pic_size; i++) {
+							if (cached_class_slot[i] == info) {
+								psg = cached_psg_slot[i];
+								hit_slot = i;
+								break;
+							}
+						}
+
+						if (hit_slot == -1 && info) {
 							ClassDB::ClassInfo *check = info;
 							while (check) {
 								psg = const_cast<ClassDB::PropertySetGet *>(check->property_setget.getptr(*index));
 								if (psg) {
-									*cached_class_slot = info;
-									*cached_psg_slot = psg;
 									break;
 								}
 								check = check->inherits_ptr;
 							}
-						}
 
-						if (psg) {
-							Callable::CallError ce;
-							Variant ret;
-							if (psg->index >= 0) {
-								Variant idx = psg->index;
-								const Variant *arg[1] = { &idx };
-								ret = obj->callp(psg->getter, arg, 1, ce);
-							} else {
-								if (psg->_getptr) {
-									ret = psg->_getptr->call(obj, nullptr, 0, ce);
-								} else {
-									ret = obj->callp(psg->getter, nullptr, 0, ce);
+							int store_slot = -1;
+							for (int i = 0; i < k_inline_cache_pic_size; i++) {
+								if (cached_class_slot[i] == nullptr) {
+									store_slot = i;
+									break;
 								}
 							}
-							valid = ce.error == Callable::CallError::CALL_OK;
-							if (valid) {
-								*dst = ret;
+							if (store_slot == -1) {
+								store_slot = 0;
+							}
+							cached_class_slot[store_slot] = info;
+							cached_psg_slot[store_slot] = psg;
+							if (psg) {
+								hit_slot = store_slot;
+							}
+						}
+
+						if (hit_slot != -1) {
+							if (psg) {
+								Callable::CallError ce;
+								Variant ret;
+								if (psg->index >= 0) {
+									Variant boxed_index = psg->index;
+									const Variant *arg[1] = { &boxed_index };
+									ret = obj->callp(psg->getter, arg, 1, ce);
+								} else {
+									if (psg->_getptr) {
+										ret = psg->_getptr->call(obj, nullptr, 0, ce);
+									} else {
+										ret = obj->callp(psg->getter, nullptr, 0, ce);
+									}
+								}
+								valid = ce.error == Callable::CallError::CALL_OK;
+								if (valid) {
+									*dst = ret;
+								}
 							}
 							used_fast_path = true;
 						}
@@ -1391,7 +1436,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 	#endif
 				}
 
-				ip += 4 + (k_inline_cache_ptr_slots * 2);
+				ip += 4 + (k_inline_cache_pic_size * k_inline_cache_ptr_slots * 2);
 			}
 			DISPATCH_OPCODE;
 
@@ -1411,7 +1456,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 			DISPATCH_OPCODE;
 
 			OPCODE(OPCODE_SET_MEMBER) {
-				constexpr int _cache_args = 3 + (k_inline_cache_ptr_slots * 2);
+				constexpr int _cache_args = 3 + (k_inline_cache_pic_size * k_inline_cache_ptr_slots * 2);
 				CHECK_SPACE(_cache_args);
 				GET_VARIANT_PTR(src, 0);
 				int indexname = _code_ptr[ip + 2];
@@ -1424,45 +1469,67 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 				if (p_instance && p_instance->owner) {
 					Object *obj = p_instance->owner;
 					ClassDB::ClassInfo **cached_class_slot = reinterpret_cast<ClassDB::ClassInfo **>(&_code_ptr[ip + 3]);
-					ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 3 + k_inline_cache_ptr_slots]);
+					ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 3 + k_inline_cache_pic_size * k_inline_cache_ptr_slots]);
 
 					ClassDB::ClassInfo *info = ClassDB::classes.getptr(obj->get_class_name());
 					ClassDB::PropertySetGet *psg = nullptr;
+					int hit_slot = -1;
 
-					if (*cached_class_slot == info && *cached_psg_slot) {
-						psg = *cached_psg_slot;
-					} else {
+					for (int i = 0; i < k_inline_cache_pic_size; i++) {
+						if (cached_class_slot[i] == info) {
+							psg = cached_psg_slot[i];
+							hit_slot = i;
+							break;
+						}
+					}
+
+					if (hit_slot == -1 && info) {
 						ClassDB::ClassInfo *check = info;
 						while (check) {
 							psg = const_cast<ClassDB::PropertySetGet *>(check->property_setget.getptr(*index));
 							if (psg) {
-								*cached_class_slot = info;
-								*cached_psg_slot = psg;
 								break;
 							}
 							check = check->inherits_ptr;
 						}
-					}
-
-					if (psg) {
-						Callable::CallError ce;
-						if (psg->index >= 0) {
-							Variant idx = psg->index;
-							const Variant *arg[2] = { &idx, src };
-							if (psg->_setptr) {
-								psg->_setptr->call(obj, arg, 2, ce);
-							} else {
-								obj->callp(psg->setter, arg, 2, ce);
-							}
-						} else {
-							const Variant *arg[1] = { src };
-							if (psg->_setptr) {
-								psg->_setptr->call(obj, arg, 1, ce);
-							} else {
-								obj->callp(psg->setter, arg, 1, ce);
+						int store_slot = -1;
+						for (int i = 0; i < k_inline_cache_pic_size; i++) {
+							if (cached_class_slot[i] == nullptr) {
+								store_slot = i;
+								break;
 							}
 						}
-						valid = ce.error == Callable::CallError::CALL_OK;
+						if (store_slot == -1) {
+							store_slot = 0;
+						}
+						cached_class_slot[store_slot] = info;
+						cached_psg_slot[store_slot] = psg;
+						if (psg) {
+							hit_slot = store_slot;
+						}
+					}
+
+					if (hit_slot != -1) {
+						if (psg) {
+							Callable::CallError ce;
+							if (psg->index >= 0) {
+								Variant boxed_index = psg->index;
+								const Variant *arg[2] = { &boxed_index, src };
+								if (psg->_setptr) {
+									psg->_setptr->call(obj, arg, 2, ce);
+								} else {
+									obj->callp(psg->setter, arg, 2, ce);
+								}
+							} else {
+								const Variant *arg[1] = { src };
+								if (psg->_setptr) {
+									psg->_setptr->call(obj, arg, 1, ce);
+								} else {
+									obj->callp(psg->setter, arg, 1, ce);
+								}
+							}
+							valid = ce.error == Callable::CallError::CALL_OK;
+						}
 						used_fast_path = true;
 					}
 				}
@@ -1488,12 +1555,12 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					OPCODE_BREAK;
 				}
 	#endif
-				ip += 3 + (k_inline_cache_ptr_slots * 2);
+				ip += 3 + (k_inline_cache_pic_size * k_inline_cache_ptr_slots * 2);
 			}
 			DISPATCH_OPCODE;
 
 			OPCODE(OPCODE_GET_MEMBER) {
-				constexpr int _cache_args = 3 + (k_inline_cache_ptr_slots * 2);
+				constexpr int _cache_args = 3 + (k_inline_cache_pic_size * k_inline_cache_ptr_slots * 2);
 				CHECK_SPACE(_cache_args);
 				GET_VARIANT_PTR(dst, 0);
 				int indexname = _code_ptr[ip + 2];
@@ -1506,43 +1573,65 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 				if (p_instance && p_instance->owner) {
 					Object *obj = p_instance->owner;
 					ClassDB::ClassInfo **cached_class_slot = reinterpret_cast<ClassDB::ClassInfo **>(&_code_ptr[ip + 3]);
-					ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 3 + k_inline_cache_ptr_slots]);
+					ClassDB::PropertySetGet **cached_psg_slot = reinterpret_cast<ClassDB::PropertySetGet **>(&_code_ptr[ip + 3 + k_inline_cache_pic_size * k_inline_cache_ptr_slots]);
 
 					ClassDB::ClassInfo *info = ClassDB::classes.getptr(obj->get_class_name());
 					ClassDB::PropertySetGet *psg = nullptr;
+					int hit_slot = -1;
 
-					if (*cached_class_slot == info && *cached_psg_slot) {
-						psg = *cached_psg_slot;
-					} else {
+					for (int i = 0; i < k_inline_cache_pic_size; i++) {
+						if (cached_class_slot[i] == info) {
+							psg = cached_psg_slot[i];
+							hit_slot = i;
+							break;
+						}
+					}
+
+					if (hit_slot == -1 && info) {
 						ClassDB::ClassInfo *check = info;
 						while (check) {
 							psg = const_cast<ClassDB::PropertySetGet *>(check->property_setget.getptr(*index));
 							if (psg) {
-								*cached_class_slot = info;
-								*cached_psg_slot = psg;
 								break;
 							}
 							check = check->inherits_ptr;
 						}
-					}
-
-					if (psg) {
-						Callable::CallError ce;
-						Variant ret;
-						if (psg->index >= 0) {
-							Variant idx = psg->index;
-							const Variant *arg[1] = { &idx };
-							ret = obj->callp(psg->getter, arg, 1, ce);
-						} else {
-							if (psg->_getptr) {
-								ret = psg->_getptr->call(obj, nullptr, 0, ce);
-							} else {
-								ret = obj->callp(psg->getter, nullptr, 0, ce);
+						int store_slot = -1;
+						for (int i = 0; i < k_inline_cache_pic_size; i++) {
+							if (cached_class_slot[i] == nullptr) {
+								store_slot = i;
+								break;
 							}
 						}
-						valid = ce.error == Callable::CallError::CALL_OK;
-						if (valid) {
-							*dst = ret;
+						if (store_slot == -1) {
+							store_slot = 0;
+						}
+						cached_class_slot[store_slot] = info;
+						cached_psg_slot[store_slot] = psg;
+						if (psg) {
+							hit_slot = store_slot;
+						}
+					}
+
+					if (hit_slot != -1) {
+						if (psg) {
+							Callable::CallError ce;
+							Variant ret;
+							if (psg->index >= 0) {
+								Variant boxed_index = psg->index;
+								const Variant *arg[1] = { &boxed_index };
+								ret = obj->callp(psg->getter, arg, 1, ce);
+							} else {
+								if (psg->_getptr) {
+									ret = psg->_getptr->call(obj, nullptr, 0, ce);
+								} else {
+									ret = obj->callp(psg->getter, nullptr, 0, ce);
+								}
+							}
+							valid = ce.error == Callable::CallError::CALL_OK;
+							if (valid) {
+								*dst = ret;
+							}
 						}
 						used_fast_path = true;
 					}
@@ -1566,7 +1655,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 	#endif
 				}
 
-				ip += 3 + (k_inline_cache_ptr_slots * 2);
+				ip += 3 + (k_inline_cache_pic_size * k_inline_cache_ptr_slots * 2);
 			}
 			DISPATCH_OPCODE;
 
@@ -2133,11 +2222,12 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 			OPCODE(OPCODE_CALL_RETURN)
 			OPCODE(OPCODE_CALL) {
 				bool call_ret = (_code_ptr[ip]) != OPCODE_CALL;
-#ifdef DEBUG_ENABLED
+	#ifdef DEBUG_ENABLED
 				bool call_async = (_code_ptr[ip]) == OPCODE_CALL_ASYNC;
-#endif
+	#endif
 				LOAD_INSTRUCTION_ARGS
-				CHECK_SPACE(3 + instr_arg_count);
+				constexpr int _call_ic_ints = k_inline_cache_pic_size * k_inline_cache_ptr_slots * 2;
+				CHECK_SPACE(3 + instr_arg_count + _call_ic_ints);
 
 				ip += instr_arg_count;
 
@@ -2147,6 +2237,9 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 				int methodname_idx = _code_ptr[ip + 2];
 				GD_ERR_BREAK(methodname_idx < 0 || methodname_idx >= _global_names_count);
 				const StringName *methodname = &_global_names_ptr[methodname_idx];
+
+				ClassDB::ClassInfo **cached_class_slot = reinterpret_cast<ClassDB::ClassInfo **>(&_code_ptr[ip + 3]);
+				MethodBind **cached_method_slot = reinterpret_cast<MethodBind **>(&_code_ptr[ip + 3 + k_inline_cache_pic_size * k_inline_cache_ptr_slots]);
 
 				GodotProfileZoneScriptSystemCall(methodname, source, name, *methodname, line);
 
@@ -2159,19 +2252,77 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 				if (GDScriptLanguage::get_singleton()->profiling) {
 					call_time = OS::get_singleton()->get_ticks_usec();
 				}
-				Variant::Type base_type = base->get_type();
-				Object *base_obj = base->get_validated_object();
-				StringName base_class = base_obj ? base_obj->get_class_name() : StringName();
 #endif
+
+				bool freed = false;
+				Object *base_obj = base->get_validated_object_with_check(freed);
+				Variant::Type base_type = base->get_type();
+				StringName base_class = base_obj ? base_obj->get_class_name() : StringName();
+
+				Variant *ret_ptr = nullptr;
+				if (call_ret) {
+					GET_INSTRUCTION_ARG(ret_arg, argc + 1);
+					ret_ptr = ret_arg;
+				}
 
 				Variant temp_ret;
 				Callable::CallError err;
-				if (call_ret) {
-					GET_INSTRUCTION_ARG(ret, argc + 1);
-					base->callp(*methodname, (const Variant **)argptrs, argc, temp_ret, err);
-					*ret = temp_ret;
+				bool used_cached_call = false;
+				MethodBind *method_from_cache = nullptr;
+				int hit_slot = -1;
+
+				if (base_obj) {
+					ClassDB::ClassInfo *info = ClassDB::classes.getptr(base_obj->get_class_name());
+					for (int i = 0; i < k_inline_cache_pic_size; i++) {
+						if (cached_class_slot[i] == info) {
+							method_from_cache = cached_method_slot[i];
+							hit_slot = i;
+							break;
+						}
+					}
+					if (hit_slot == -1) {
+						MethodBind *method = ClassDB::get_method(base_obj->get_class_name(), *methodname);
+						int store_slot = -1;
+						for (int i = 0; i < k_inline_cache_pic_size; i++) {
+							if (cached_class_slot[i] == nullptr) {
+								store_slot = i;
+								break;
+							}
+						}
+						if (store_slot == -1) {
+							store_slot = 0;
+						}
+						cached_class_slot[store_slot] = info;
+						cached_method_slot[store_slot] = method;
+						// Only treat as a hit when we have a valid bind. Script instances can still resolve missing ClassDB methods.
+						if (method) {
+							method_from_cache = method;
+							hit_slot = store_slot;
+						}
+					}
+
+					if (method_from_cache) {
+						used_cached_call = true;
+						if (call_ret && ret_ptr) {
+							temp_ret = method_from_cache->call(base_obj, (const Variant **)argptrs, argc, err);
+							*ret_ptr = temp_ret;
+						} else {
+							temp_ret = method_from_cache->call(base_obj, (const Variant **)argptrs, argc, err);
+						}
+					}
+				}
+
+				if (!used_cached_call) {
+					if (call_ret && ret_ptr) {
+						base->callp(*methodname, (const Variant **)argptrs, argc, temp_ret, err);
+						*ret_ptr = temp_ret;
+					} else {
+						base->callp(*methodname, (const Variant **)argptrs, argc, temp_ret, err);
+					}
+				}
 #ifdef DEBUG_ENABLED
-					if (ret->get_type() == Variant::NIL) {
+				if (call_ret && ret_ptr) {
+					if (ret_ptr->get_type() == Variant::NIL) {
 						if (base_type == Variant::OBJECT) {
 							if (base_obj) {
 								MethodBind *method = ClassDB::get_method(base_class, *methodname);
@@ -2186,20 +2337,18 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 						}
 					}
 
-					if (!call_async && ret->get_type() == Variant::OBJECT) {
+					if (!call_async && ret_ptr->get_type() == Variant::OBJECT) {
 						// Check if getting a function state without await.
 						bool was_freed = false;
-						Object *obj = ret->get_validated_object_with_check(was_freed);
+						Object *obj = ret_ptr->get_validated_object_with_check(was_freed);
 
 						if (obj && obj->is_class_ptr(GDScriptFunctionState::get_class_ptr_static())) {
 							err_text = R"(Trying to call an async function without "await".)";
 							OPCODE_BREAK;
 						}
 					}
-#endif
-				} else {
-					base->callp(*methodname, (const Variant **)argptrs, argc, temp_ret, err);
 				}
+#endif
 #ifdef DEBUG_ENABLED
 
 				if (GDScriptLanguage::get_singleton()->profiling) {
@@ -2253,7 +2402,7 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 				}
 #endif // DEBUG_ENABLED
 
-				ip += 3;
+				ip += 3 + _call_ic_ints;
 			}
 			DISPATCH_OPCODE;
 
