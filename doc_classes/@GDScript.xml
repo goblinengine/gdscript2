@@ -159,6 +159,14 @@
 				[/codeblock]
 			</description>
 		</method>
+		<method name="swap">
+			<return type="void" />
+			<param index="0" name="a" type="Variant" />
+			<param index="1" name="b" type="Variant" />
+			<description>
+				Swaps the contents of [param a] and [param b] in place without copying either value. Internally uses Variant's swap semantics so simple types exchange their inline data, while arrays and other reference-counted types exchange their internal storage pointers.
+			</description>
+		</method>
 		<method name="load">
 			<return type="Resource" />
 			<param index="0" name="path" type="String" />

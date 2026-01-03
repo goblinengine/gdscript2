@@ -671,6 +671,34 @@ GDScriptParser::DataType GDScriptAnalyzer::resolve_datatype(GDScriptParser::Type
 	resolving_datatype.kind = GDScriptParser::DataType::RESOLVING;
 	p_type->set_datatype(resolving_datatype);
 
+	if (p_type->is_union()) {
+		GDScriptParser::DataType result;
+		result.kind = GDScriptParser::DataType::UNION;
+		result.type_source = GDScriptParser::DataType::ANNOTATED_EXPLICIT;
+
+		for (int i = 0; i < p_type->union_types.size(); i++) {
+			GDScriptParser::TypeNode *union_type = p_type->union_types[i];
+			GDScriptParser::DataType branch_type = resolve_datatype(union_type);
+			bool duplicated = false;
+			for (int j = 0; j < result.union_types.size(); j++) {
+				if (branch_type == result.union_types[j]) {
+					duplicated = true;
+					break;
+				}
+			}
+			if (!duplicated) {
+				result.union_types.push_back(branch_type);
+			}
+		}
+
+		if (result.union_types.size() == 1) {
+			result = result.union_types[0];
+		}
+
+		p_type->set_datatype(result);
+		return result;
+	}
+
 	GDScriptParser::DataType result;
 	result.type_source = GDScriptParser::DataType::ANNOTATED_EXPLICIT;
 
@@ -738,6 +766,13 @@ GDScriptParser::DataType GDScriptAnalyzer::resolve_datatype(GDScriptParser::Type
 				return bad_type;
 			}
 			result.kind = GDScriptParser::DataType::VARIANT;
+		} else if (first == SNAME("null")) {
+			if (p_type->type_chain.size() > 1) {
+				push_error(R"("null" type cannot contain nested types.)", p_type->type_chain[1]);
+				return bad_type;
+			}
+			result.kind = GDScriptParser::DataType::BUILTIN;
+			result.builtin_type = Variant::NIL;
 		} else if (GDScriptParser::get_builtin_type(first) < Variant::VARIANT_MAX) {
 			// Built-in types.
 			const Variant::Type builtin_type = GDScriptParser::get_builtin_type(first);
@@ -3841,27 +3876,53 @@ void GDScriptAnalyzer::reduce_cast(GDScriptParser::CastNode *p_cast) {
 
 	if (!cast_type.is_variant()) {
 		GDScriptParser::DataType op_type = p_cast->operand->get_datatype();
-		if (op_type.is_variant() || !op_type.is_hard_type()) {
-			mark_node_unsafe(p_cast);
-#ifdef DEBUG_ENABLED
-			parser->push_warning(p_cast, GDScriptWarning::UNSAFE_CAST, cast_type.to_string());
-#endif // DEBUG_ENABLED
-		} else {
-			bool valid = false;
-			if (op_type.builtin_type == Variant::INT && cast_type.kind == GDScriptParser::DataType::ENUM) {
-				mark_node_unsafe(p_cast);
-				valid = true;
-			} else if (op_type.kind == GDScriptParser::DataType::ENUM && cast_type.builtin_type == Variant::INT) {
-				valid = true;
-			} else if (op_type.kind == GDScriptParser::DataType::BUILTIN && cast_type.kind == GDScriptParser::DataType::BUILTIN) {
-				valid = Variant::can_convert(op_type.builtin_type, cast_type.builtin_type);
-			} else if (op_type.kind != GDScriptParser::DataType::BUILTIN && cast_type.kind != GDScriptParser::DataType::BUILTIN) {
-				valid = is_type_compatible(cast_type, op_type) || is_type_compatible(op_type, cast_type);
-			}
 
-			if (!valid) {
-				push_error(vformat(R"(Invalid cast. Cannot convert from "%s" to "%s".)", op_type.to_string(), cast_type.to_string()), p_cast->cast_type);
+		auto _can_convert_branch = [&](const GDScriptParser::DataType &p_branch_type) {
+			if (p_branch_type.is_variant() || !p_branch_type.is_hard_type()) {
+				return false;
 			}
+			if (p_branch_type.builtin_type == Variant::INT && cast_type.kind == GDScriptParser::DataType::ENUM) {
+				return true;
+			}
+			if (p_branch_type.kind == GDScriptParser::DataType::ENUM && cast_type.builtin_type == Variant::INT) {
+				return true;
+			}
+			if (p_branch_type.kind == GDScriptParser::DataType::BUILTIN && cast_type.kind == GDScriptParser::DataType::BUILTIN) {
+				if (cast_type.builtin_type == Variant::STRING) {
+					return true; // Allow string casts from any primitive/enum-like source.
+				}
+				return Variant::can_convert(p_branch_type.builtin_type, cast_type.builtin_type);
+			}
+			if (p_branch_type.kind != GDScriptParser::DataType::BUILTIN && cast_type.kind != GDScriptParser::DataType::BUILTIN) {
+				return is_type_compatible(cast_type, p_branch_type) || is_type_compatible(p_branch_type, cast_type);
+			}
+			return false;
+		};
+
+		bool valid = false;
+		if (op_type.kind == GDScriptParser::DataType::UNION) {
+			for (int i = 0; i < op_type.union_types.size(); i++) {
+				if (_can_convert_branch(op_type.union_types[i])) {
+					valid = true;
+					break;
+				}
+			}
+			mark_node_unsafe(p_cast); // Cast depends on runtime branch.
+		} else if (cast_type.kind == GDScriptParser::DataType::UNION) {
+			valid = true; // Casting to a union is always permitted; runtime value decides.
+			mark_node_unsafe(p_cast);
+		} else if (op_type.is_variant() || !op_type.is_hard_type()) {
+			valid = true;
+			mark_node_unsafe(p_cast);
+		#ifdef DEBUG_ENABLED
+			parser->push_warning(p_cast, GDScriptWarning::UNSAFE_CAST, cast_type.to_string());
+		#endif // DEBUG_ENABLED
+		} else {
+			valid = _can_convert_branch(op_type);
+		}
+
+		if (!valid) {
+			push_error(vformat(R"(Invalid cast. Cannot convert from "%s" to "%s".)", op_type.to_string(), cast_type.to_string()), p_cast->cast_type);
 		}
 	}
 }
@@ -5656,6 +5717,29 @@ GDScriptParser::DataType GDScriptAnalyzer::type_from_variant(const Variant &p_va
 }
 
 GDScriptParser::DataType GDScriptAnalyzer::type_from_metatype(const GDScriptParser::DataType &p_meta_type) {
+	if (p_meta_type.kind == GDScriptParser::DataType::UNION) {
+		GDScriptParser::DataType result;
+		result.kind = GDScriptParser::DataType::UNION;
+		result.type_source = p_meta_type.type_source;
+		for (int i = 0; i < p_meta_type.union_types.size(); i++) {
+			GDScriptParser::DataType converted = type_from_metatype(p_meta_type.union_types[i]);
+			bool duplicated = false;
+			for (int j = 0; j < result.union_types.size(); j++) {
+				if (converted == result.union_types[j]) {
+					duplicated = true;
+					break;
+				}
+			}
+			if (!duplicated) {
+				result.union_types.push_back(converted);
+			}
+		}
+		if (result.union_types.size() == 1) {
+			return result.union_types[0];
+		}
+		return result;
+	}
+
 	GDScriptParser::DataType result = p_meta_type;
 	result.is_meta_type = false;
 	result.is_pseudo_type = false;
@@ -6189,6 +6273,24 @@ bool GDScriptAnalyzer::check_type_compatibility(const GDScriptParser::DataType &
 	// These return "true" so it doesn't affect users negatively.
 	ERR_FAIL_COND_V_MSG(!p_target.is_set(), true, "Parser bug (please report): Trying to check compatibility of unset target type");
 	ERR_FAIL_COND_V_MSG(!p_source.is_set(), true, "Parser bug (please report): Trying to check compatibility of unset value type");
+
+	if (p_target.kind == GDScriptParser::DataType::UNION) {
+		for (int i = 0; i < p_target.union_types.size(); i++) {
+			if (check_type_compatibility(p_target.union_types[i], p_source, p_allow_implicit_conversion, p_source_node)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	if (p_source.kind == GDScriptParser::DataType::UNION) {
+		for (int i = 0; i < p_source.union_types.size(); i++) {
+			if (!check_type_compatibility(p_target, p_source.union_types[i], p_allow_implicit_conversion, p_source_node)) {
+				return false;
+			}
+		}
+		return true;
+	}
 
 	if (p_target.kind == GDScriptParser::DataType::VARIANT) {
 		// Variant can receive anything.

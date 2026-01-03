@@ -38,6 +38,7 @@
 #include "core/templates/a_hash_map.h"
 #include "core/templates/vector.h"
 #include "core/variant/typed_array.h"
+#include <utility>
 
 #ifdef DEBUG_ENABLED
 
@@ -451,6 +452,21 @@ struct GDScriptUtilityFunctionsDefinitions {
 		}
 	}
 
+	static inline void swap(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
+		DEBUG_VALIDATE_ARG_COUNT(2, 2);
+
+		Variant *first = const_cast<Variant *>(p_args[0]);
+		Variant *second = const_cast<Variant *>(p_args[1]);
+
+		if (first != second) {
+			Variant temp = std::move(*first);
+			*first = std::move(*second);
+			*second = std::move(temp);
+		}
+
+		*r_ret = Variant();
+	}
+
 	static inline void is_instance_of(Variant *r_ret, const Variant **p_args, int p_arg_count, Callable::CallError &r_error) {
 		DEBUG_VALIDATE_ARG_COUNT(2, 2);
 
@@ -587,6 +603,7 @@ void GDScriptUtilityFunctions::register_functions() {
 	REGISTER_FUNC( print_stack,    false, RET(NIL),           NOARGS,                                  false, varray(     ));
 	REGISTER_FUNC( get_stack,      false, RET(ARRAY),         NOARGS,                                  false, varray(     ));
 	REGISTER_FUNC( len,            true,  RET(INT),           ARGS( ARGVAR("var")                   ), false, varray(     ));
+	REGISTER_FUNC( swap,           false, RET(NIL),           ARGS( ARGVAR("a"), ARGVAR("b")      ),   false, varray(     ));
 	REGISTER_FUNC( is_instance_of, true,  RET(BOOL),          ARGS( ARGVAR("value"), ARGVAR("type") ), false, varray(     ));
 	/* clang-format on */
 }

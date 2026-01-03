@@ -101,6 +101,7 @@ public:
 	class DataType {
 	public:
 		Vector<DataType> container_element_types;
+		Vector<DataType> union_types;
 
 		enum Kind {
 			BUILTIN,
@@ -108,6 +109,7 @@ public:
 			SCRIPT,
 			CLASS, // GDScript.
 			ENUM, // Enumeration.
+			UNION, // Union of multiple possible types.
 			VARIANT, // Can be any type.
 			RESOLVING, // Currently resolving.
 			UNRESOLVED,
@@ -141,8 +143,18 @@ public:
 		_FORCE_INLINE_ bool is_set() const { return kind != RESOLVING && kind != UNRESOLVED; }
 		_FORCE_INLINE_ bool is_resolving() const { return kind == RESOLVING; }
 		_FORCE_INLINE_ bool has_no_type() const { return type_source == UNDETECTED; }
-		_FORCE_INLINE_ bool is_variant() const { return kind == VARIANT || kind == RESOLVING || kind == UNRESOLVED; }
+		_FORCE_INLINE_ bool is_variant() const {
+			if (kind == UNION) {
+				for (int i = 0; i < union_types.size(); i++) {
+					if (union_types[i].is_variant()) {
+						return true;
+					}
+				}
+			}
+			return kind == VARIANT || kind == RESOLVING || kind == UNRESOLVED;
+		}
 		_FORCE_INLINE_ bool is_hard_type() const { return type_source > INFERRED; }
+		_FORCE_INLINE_ bool is_union() const { return !union_types.is_empty(); }
 
 		String to_string() const;
 		_FORCE_INLINE_ String to_string_strict() const { return is_hard_type() ? to_string() : "Variant"; }
@@ -202,6 +214,44 @@ public:
 				return true; // Can be considered equal for parsing purposes.
 			}
 
+			if (is_union() || p_other.is_union()) {
+				if (is_union() && p_other.is_union()) {
+					if (union_types.size() != p_other.union_types.size()) {
+						return false;
+					}
+
+					for (int i = 0; i < union_types.size(); i++) {
+						bool found = false;
+						for (int j = 0; j < p_other.union_types.size(); j++) {
+							if (union_types[i] == p_other.union_types[j]) {
+								found = true;
+								break;
+							}
+						}
+						if (!found) {
+							return false;
+						}
+					}
+					return true;
+				}
+
+				if (is_union()) {
+					for (int i = 0; i < union_types.size(); i++) {
+						if (union_types[i] == p_other) {
+							return true;
+						}
+					}
+					return false;
+				}
+
+				for (int i = 0; i < p_other.union_types.size(); i++) {
+					if (*this == p_other.union_types[i]) {
+						return true;
+					}
+				}
+				return false;
+			}
+
 			if (kind != p_other.kind) {
 				return false;
 			}
@@ -247,6 +297,7 @@ public:
 			method_info = p_other.method_info;
 			enum_values = p_other.enum_values;
 			container_element_types = p_other.container_element_types;
+			union_types = p_other.union_types;
 		}
 
 		DataType() = default;
@@ -1205,10 +1256,17 @@ public:
 	struct TypeNode : public Node {
 		Vector<IdentifierNode *> type_chain;
 		Vector<TypeNode *> container_types;
+		Vector<TypeNode *> union_types;
 
 		TypeNode *get_container_type_or_null(int p_index) const {
 			return p_index >= 0 && p_index < container_types.size() ? container_types[p_index] : nullptr;
 		}
+
+		TypeNode *get_union_type_or_null(int p_index) const {
+			return p_index >= 0 && p_index < union_types.size() ? union_types[p_index] : nullptr;
+		}
+
+		bool is_union() const { return !union_types.is_empty(); }
 
 		TypeNode() {
 			type = TYPE;
@@ -1608,6 +1666,7 @@ private:
 	ExpressionNode *parse_type_test(ExpressionNode *p_previous_operand, bool p_can_assign);
 	ExpressionNode *parse_yield(ExpressionNode *p_previous_operand, bool p_can_assign);
 	ExpressionNode *parse_invalid_token(ExpressionNode *p_previous_operand, bool p_can_assign);
+	TypeNode *parse_type_single(bool p_allow_void = false);
 	TypeNode *parse_type(bool p_allow_void = false);
 
 #ifdef TOOLS_ENABLED

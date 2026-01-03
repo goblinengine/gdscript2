@@ -856,6 +856,78 @@ void GDScriptParser::parse_program() {
 	clear_unused_annotations();
 }
 
+GDScriptParser::TypeNode *GDScriptParser::parse_type_single(bool p_allow_void) {
+	TypeNode *type = alloc_node<TypeNode>();
+	make_completion_context(p_allow_void ? COMPLETION_TYPE_NAME_OR_VOID : COMPLETION_TYPE_NAME, type);
+	bool using_null_literal = false;
+	if (!match(GDScriptTokenizer::Token::IDENTIFIER)) {
+		if (match(GDScriptTokenizer::Token::LITERAL) && previous.literal.get_type() == Variant::NIL) {
+			using_null_literal = true;
+		} else if (match(GDScriptTokenizer::Token::TK_VOID)) {
+			if (p_allow_void) {
+				complete_extents(type);
+				TypeNode *void_type = type;
+				return void_type;
+			} else {
+				push_error(R"("void" is only allowed for a function return type.)");
+			}
+		} else {
+			// Leave error message to the caller who knows the context.
+			complete_extents(type);
+			return nullptr;
+		}
+	}
+
+	IdentifierNode *type_element = nullptr;
+	if (using_null_literal) {
+		type_element = alloc_node<IdentifierNode>();
+		reset_extents(type_element, previous);
+		complete_extents(type_element);
+		type_element->name = SNAME("null");
+		type_element->suite = current_suite;
+	} else {
+		type_element = parse_identifier();
+	}
+
+	type->type_chain.push_back(type_element);
+
+	if (match(GDScriptTokenizer::Token::BRACKET_OPEN)) {
+		// Typed collection (like Array[int], Dictionary[String, int]).
+		bool first_pass = true;
+		do {
+			TypeNode *container_type = parse_type(false); // Don't allow void for element type.
+			if (container_type == nullptr) {
+				push_error(vformat(R"(Expected type for collection after "%s".)", first_pass ? "[" : ","));
+				complete_extents(type);
+				type = nullptr;
+				break;
+			} else if (container_type->container_types.size() > 0) {
+				push_error("Nested typed collections are not supported.");
+			} else {
+				type->container_types.append(container_type);
+			}
+			first_pass = false;
+		} while (match(GDScriptTokenizer::Token::COMMA));
+		consume(GDScriptTokenizer::Token::BRACKET_CLOSE, R"(Expected closing "]" after collection type.)");
+		if (type != nullptr) {
+			complete_extents(type);
+		}
+		return type;
+	}
+
+	int chain_index = 1;
+	while (match(GDScriptTokenizer::Token::PERIOD)) {
+		make_completion_context(COMPLETION_TYPE_ATTRIBUTE, type, chain_index++);
+		if (consume(GDScriptTokenizer::Token::IDENTIFIER, R"(Expected inner type name after ".".)")) {
+			type_element = parse_identifier();
+			type->type_chain.push_back(type_element);
+		}
+	}
+
+	complete_extents(type);
+	return type;
+}
+
 Ref<GDScriptParserRef> GDScriptParser::get_depended_parser_for(const String &p_path) {
 	Ref<GDScriptParserRef> ref;
 	if (depended_parsers.has(p_path)) {
@@ -990,6 +1062,33 @@ void GDScriptParser::parse_class_name() {
 	}
 }
 
+GDScriptParser::TypeNode *GDScriptParser::parse_type(bool p_allow_void) {
+	TypeNode *type = parse_type_single(p_allow_void);
+	if (type == nullptr) {
+		return nullptr;
+	}
+
+	if (!match(GDScriptTokenizer::Token::PIPE)) {
+		return type;
+	}
+
+	TypeNode *union_type = alloc_node<TypeNode>();
+	reset_extents(union_type, type);
+	union_type->union_types.push_back(type);
+
+	do {
+		TypeNode *next_type = parse_type_single(p_allow_void);
+		if (next_type == nullptr) {
+			push_error(R"(Expected type specifier after "|")");
+			break;
+		}
+		union_type->union_types.push_back(next_type);
+	} while (match(GDScriptTokenizer::Token::PIPE));
+
+	update_extents(union_type);
+	complete_extents(union_type);
+	return union_type;
+}
 void GDScriptParser::parse_extends() {
 	current_class->extends_used = true;
 
@@ -3843,65 +3942,6 @@ GDScriptParser::ExpressionNode *GDScriptParser::parse_invalid_token(ExpressionNo
 	return p_previous_operand;
 }
 
-GDScriptParser::TypeNode *GDScriptParser::parse_type(bool p_allow_void) {
-	TypeNode *type = alloc_node<TypeNode>();
-	make_completion_context(p_allow_void ? COMPLETION_TYPE_NAME_OR_VOID : COMPLETION_TYPE_NAME, type);
-	if (!match(GDScriptTokenizer::Token::IDENTIFIER)) {
-		if (match(GDScriptTokenizer::Token::TK_VOID)) {
-			if (p_allow_void) {
-				complete_extents(type);
-				TypeNode *void_type = type;
-				return void_type;
-			} else {
-				push_error(R"("void" is only allowed for a function return type.)");
-			}
-		}
-		// Leave error message to the caller who knows the context.
-		complete_extents(type);
-		return nullptr;
-	}
-
-	IdentifierNode *type_element = parse_identifier();
-
-	type->type_chain.push_back(type_element);
-
-	if (match(GDScriptTokenizer::Token::BRACKET_OPEN)) {
-		// Typed collection (like Array[int], Dictionary[String, int]).
-		bool first_pass = true;
-		do {
-			TypeNode *container_type = parse_type(false); // Don't allow void for element type.
-			if (container_type == nullptr) {
-				push_error(vformat(R"(Expected type for collection after "%s".)", first_pass ? "[" : ","));
-				complete_extents(type);
-				type = nullptr;
-				break;
-			} else if (container_type->container_types.size() > 0) {
-				push_error("Nested typed collections are not supported.");
-			} else {
-				type->container_types.append(container_type);
-			}
-			first_pass = false;
-		} while (match(GDScriptTokenizer::Token::COMMA));
-		consume(GDScriptTokenizer::Token::BRACKET_CLOSE, R"(Expected closing "]" after collection type.)");
-		if (type != nullptr) {
-			complete_extents(type);
-		}
-		return type;
-	}
-
-	int chain_index = 1;
-	while (match(GDScriptTokenizer::Token::PERIOD)) {
-		make_completion_context(COMPLETION_TYPE_ATTRIBUTE, type, chain_index++);
-		if (consume(GDScriptTokenizer::Token::IDENTIFIER, R"(Expected inner type name after ".".)")) {
-			type_element = parse_identifier();
-			type->type_chain.push_back(type_element);
-		}
-	}
-
-	complete_extents(type);
-	return type;
-}
-
 #ifdef TOOLS_ENABLED
 enum DocLineState {
 	DOC_LINE_NORMAL,
@@ -4616,6 +4656,9 @@ static StringName _find_narrowest_native_or_global_class(const GDScriptParser::D
 			}
 			return _find_narrowest_native_or_global_class(p_type.class_type->base_type);
 		} break;
+		case GDScriptParser::DataType::UNION: {
+			return StringName();
+		} break;
 		default: {
 			ERR_FAIL_V(StringName());
 		} break;
@@ -4771,6 +4814,9 @@ bool GDScriptParser::export_annotations(AnnotationNode *p_annotation, Node *p_ta
 				variable->export_info.hint = PROPERTY_HINT_NONE;
 				variable->export_info.hint_string = String();
 				break;
+			case GDScriptParser::DataType::UNION:
+				push_error(R"(Union types cannot be exported with the simple "@export" annotation.)", p_annotation);
+				return false;
 			case GDScriptParser::DataType::NATIVE:
 			case GDScriptParser::DataType::SCRIPT:
 			case GDScriptParser::DataType::CLASS: {
@@ -4848,6 +4894,9 @@ bool GDScriptParser::export_annotations(AnnotationNode *p_annotation, Node *p_ta
 					variable->export_info.hint = PROPERTY_HINT_NONE;
 					variable->export_info.hint_string = String();
 					break;
+				case GDScriptParser::DataType::UNION:
+					push_error(R"(Union types cannot be exported inside dictionary annotations.)", p_annotation);
+					return false;
 				case GDScriptParser::DataType::NATIVE:
 				case GDScriptParser::DataType::SCRIPT:
 				case GDScriptParser::DataType::CLASS: {
@@ -5303,6 +5352,16 @@ String GDScriptParser::DataType::to_string() const {
 	switch (kind) {
 		case VARIANT:
 			return "Variant";
+		case UNION: {
+			String result;
+			for (int i = 0; i < union_types.size(); i++) {
+				if (i > 0) {
+					result += " | ";
+				}
+				result += union_types[i].to_string();
+			}
+			return result;
+		}
 		case BUILTIN:
 			if (builtin_type == Variant::NIL) {
 				return "null";
@@ -5362,6 +5421,10 @@ PropertyInfo GDScriptParser::DataType::to_property_info(const String &p_name) co
 	}
 
 	switch (kind) {
+		case UNION:
+			result.type = Variant::NIL;
+			result.usage |= PROPERTY_USAGE_NIL_IS_VARIANT;
+			return result;
 		case BUILTIN:
 			result.type = builtin_type;
 			if (builtin_type == Variant::ARRAY && has_container_element_type(0)) {
@@ -5395,6 +5458,7 @@ PropertyInfo GDScriptParser::DataType::to_property_info(const String &p_name) co
 						result.hint = PROPERTY_HINT_ARRAY_TYPE;
 						result.hint_string = String(elem_type.native_type).replace("::", ".");
 						break;
+					case UNION:
 					case VARIANT:
 					case RESOLVING:
 					case UNRESOLVED:
@@ -5404,7 +5468,8 @@ PropertyInfo GDScriptParser::DataType::to_property_info(const String &p_name) co
 				const DataType key_type = get_container_element_type_or_variant(0);
 				const DataType value_type = get_container_element_type_or_variant(1);
 				if ((key_type.kind == VARIANT && value_type.kind == VARIANT) || key_type.kind == RESOLVING ||
-						key_type.kind == UNRESOLVED || value_type.kind == RESOLVING || value_type.kind == UNRESOLVED) {
+						key_type.kind == UNRESOLVED || value_type.kind == RESOLVING || value_type.kind == UNRESOLVED ||
+						key_type.kind == UNION || value_type.kind == UNION) {
 					break;
 				}
 				String key_hint, value_hint;
@@ -5432,6 +5497,7 @@ PropertyInfo GDScriptParser::DataType::to_property_info(const String &p_name) co
 					case ENUM:
 						key_hint = String(key_type.native_type).replace("::", ".");
 						break;
+					case UNION:
 					default:
 						key_hint = "Variant";
 						break;
@@ -5460,6 +5526,7 @@ PropertyInfo GDScriptParser::DataType::to_property_info(const String &p_name) co
 					case ENUM:
 						value_hint = String(value_type.native_type).replace("::", ".");
 						break;
+					case UNION:
 					default:
 						value_hint = "Variant";
 						break;
@@ -5551,6 +5618,24 @@ GDScriptParser::DataType GDScriptParser::DataType::get_typed_container_type() co
 }
 
 bool GDScriptParser::DataType::can_reference(const GDScriptParser::DataType &p_other) const {
+	if (is_union()) {
+		for (int i = 0; i < union_types.size(); i++) {
+			if (union_types[i].can_reference(p_other)) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	if (p_other.is_union()) {
+		for (int i = 0; i < p_other.union_types.size(); i++) {
+			if (can_reference(p_other.union_types[i])) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	if (p_other.is_meta_type) {
 		return false;
 	} else if (builtin_type != p_other.builtin_type) {
@@ -6363,15 +6448,26 @@ void GDScriptParser::TreePrinter::print_ternary_op(TernaryOpNode *p_ternary_op) 
 }
 
 void GDScriptParser::TreePrinter::print_type(TypeNode *p_type) {
+	if (p_type->is_union()) {
+		for (int i = 0; i < p_type->union_types.size(); i++) {
+			if (i > 0) {
+				push_text(" | ");
+			}
+			print_type(p_type->union_types[i]);
+		}
+		return;
+	}
+
 	if (p_type->type_chain.is_empty()) {
 		push_text("Void");
-	} else {
-		for (int i = 0; i < p_type->type_chain.size(); i++) {
-			if (i > 0) {
-				push_text(".");
-			}
-			print_identifier(p_type->type_chain[i]);
+		return;
+	}
+
+	for (int i = 0; i < p_type->type_chain.size(); i++) {
+		if (i > 0) {
+			push_text(".");
 		}
+		print_identifier(p_type->type_chain[i]);
 	}
 }
 

@@ -1857,6 +1857,12 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 
 				GD_ERR_BREAK(to_type < 0 || to_type >= Variant::VARIANT_MAX);
 
+				if (to_type == Variant::STRING) {
+					*dst = src->operator String();
+					ip += 4;
+					DISPATCH_OPCODE;
+				}
+
 #ifdef DEBUG_ENABLED
 				if (src->operator Object *() && !src->get_validated_object()) {
 					err_text = "Trying to cast a freed object.";

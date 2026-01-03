@@ -1270,6 +1270,14 @@ static void _find_identifiers_in_base(const GDScriptCompletionIdentifier &p_base
 				// This already finds all parent identifiers, so we are done.
 				base_type = GDScriptParser::DataType();
 			} break;
+			case GDScriptParser::DataType::UNION: {
+				for (int i = 0; i < base_type.union_types.size(); i++) {
+					GDScriptCompletionIdentifier branch = p_base;
+					branch.type = base_type.union_types[i];
+					_find_identifiers_in_base(branch, p_only_functions, p_types_only, p_add_braces, r_result, p_recursion_depth);
+				}
+				base_type = GDScriptParser::DataType();
+			} break;
 			case GDScriptParser::DataType::SCRIPT: {
 				Ref<Script> scr = base_type.script_type;
 				if (scr.is_valid()) {
@@ -2466,6 +2474,9 @@ static bool _guess_identifier_type(GDScriptParser::CompletionContext &p_context,
 					}
 					base_type = GDScriptParser::DataType();
 				} break;
+				case GDScriptParser::DataType::UNION:
+					base_type = GDScriptParser::DataType();
+					break;
 				default:
 					break;
 			}
@@ -2715,6 +2726,16 @@ static bool _guess_identifier_type_from_base(GDScriptParser::CompletionContext &
 						r_type = _type_from_variant(res, p_context);
 						r_type.value = Variant();
 						r_type.type.is_constant = false;
+						return true;
+					}
+				}
+				return false;
+			} break;
+			case GDScriptParser::DataType::UNION: {
+				for (int i = 0; i < base_type.union_types.size(); i++) {
+					GDScriptCompletionIdentifier branch = p_base;
+					branch.type = base_type.union_types[i];
+					if (_guess_identifier_type_from_base(p_context, branch, p_identifier, r_type)) {
 						return true;
 					}
 				}

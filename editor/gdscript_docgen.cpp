@@ -66,6 +66,22 @@ void GDScriptDocGen::_doctype_from_gdtype(const GDType &p_gdtype, String &r_type
 		r_type = "Variant";
 		return;
 	}
+
+	if (p_gdtype.kind == GDType::UNION) {
+		Vector<String> parts;
+		parts.resize(p_gdtype.union_types.size());
+		for (int i = 0; i < p_gdtype.union_types.size(); i++) {
+			String branch_type, branch_enum;
+			_doctype_from_gdtype(p_gdtype.union_types[i], branch_type, branch_enum, p_is_return);
+			if (!branch_enum.is_empty()) {
+				branch_type += "." + branch_enum;
+			}
+			parts.write[i] = branch_type;
+		}
+		r_type = String(" | ").join(parts);
+		r_enum = String();
+		return;
+	}
 	switch (p_gdtype.kind) {
 		case GDType::BUILTIN:
 			if (p_gdtype.builtin_type == Variant::NIL) {
@@ -80,6 +96,9 @@ void GDScriptDocGen::_doctype_from_gdtype(const GDType &p_gdtype, String &r_type
 					return;
 				}
 				if (!r_type.is_empty() && r_type != "Variant") {
+					if (r_type.find(" | ") != -1) {
+						r_type = "(" + r_type + ")";
+					}
 					r_type += "[]";
 					return;
 				}
@@ -89,6 +108,12 @@ void GDScriptDocGen::_doctype_from_gdtype(const GDType &p_gdtype, String &r_type
 				_doctype_from_gdtype(p_gdtype.get_container_element_type_or_variant(0), key, r_enum);
 				_doctype_from_gdtype(p_gdtype.get_container_element_type_or_variant(1), value, r_enum);
 				if (key != "Variant" || value != "Variant") {
+					if (key.find(" | ") != -1) {
+						key = "(" + key + ")";
+					}
+					if (value.find(" | ") != -1) {
+						value = "(" + value + ")";
+					}
 					r_type = "Dictionary[" + key + ", " + value + "]";
 					return;
 				}
