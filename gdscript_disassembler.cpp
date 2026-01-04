@@ -714,6 +714,33 @@ void GDScriptFunction::disassemble(const Vector<String> &p_code_lines) const {
 
 				incr = 5 + argc + (_inline_cache_ptr_slots * 2 * _inline_cache_pic_size);
 			} break;
+			case OPCODE_CALL_SELF_INLINE:
+			case OPCODE_CALL_SELF_INLINE_RET: {
+				bool ret = (_code_ptr[ip]) == OPCODE_CALL_SELF_INLINE_RET;
+
+				int instr_var_args = _code_ptr[++ip];
+
+				text += ret ? "call-inline-ret " : "call-inline ";
+
+				int argc = _code_ptr[ip + 1 + instr_var_args];
+				if (ret) {
+					text += DADDR(1 + argc) + " = ";
+				}
+
+				text += "self.";
+				text += String(_global_names_ptr[_code_ptr[ip + 2 + instr_var_args]]);
+				text += "(";
+
+				for (int i = 0; i < argc; i++) {
+					if (i > 0) {
+						text += ", ";
+					}
+					text += DADDR(1 + i);
+				}
+				text += ")";
+
+				incr = instr_var_args + 3 + (_inline_cache_ptr_slots * 2);
+			} break;
 			case OPCODE_CALL_METHOD_BIND:
 			case OPCODE_CALL_METHOD_BIND_RET: {
 				bool ret = (_code_ptr[ip]) == OPCODE_CALL_METHOD_BIND_RET;

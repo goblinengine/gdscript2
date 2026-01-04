@@ -644,7 +644,9 @@ GDScriptCodeGenerator::Address GDScriptCompiler::_parse_expression(CodeGen &code
 						bool inline_script_call = callee_id->function_source != nullptr && callee_id->function_source->is_inline;
 
 						// Self function call.
-						if (!inline_script_call && ClassDB::has_method(codegen.script->native->get_name(), call->function_name)) {
+						if (inline_script_call && !is_awaited) {
+							gen->write_call_self_inline(result, call->function_name, arguments);
+						} else if (!inline_script_call && ClassDB::has_method(codegen.script->native->get_name(), call->function_name)) {
 							// Native method, use faster path.
 							GDScriptCodeGenerator::Address self;
 							self.mode = GDScriptCodeGenerator::Address::SELF;

@@ -1405,6 +1405,26 @@ void GDScriptByteCodeGenerator::write_call_self_async(const Address &p_target, c
 	ct.cleanup();
 }
 
+void GDScriptByteCodeGenerator::write_call_self_inline(const Address &p_target, const StringName &p_function_name, const Vector<Address> &p_arguments) {
+	append_opcode_and_argcount(p_target.mode == Address::NIL ? GDScriptFunction::OPCODE_CALL_SELF_INLINE : GDScriptFunction::OPCODE_CALL_SELF_INLINE_RET, 1 + p_arguments.size());
+	for (int i = 0; i < p_arguments.size(); i++) {
+		append(p_arguments[i]);
+	}
+	CallTarget ct = get_call_target(p_target);
+	append(ct.target);
+	append(p_arguments.size());
+	append(p_function_name);
+	// Inline call cache: script pointer, function pointer.
+	constexpr int _ptr_slots = sizeof(void *) / sizeof(int);
+	for (int i = 0; i < _ptr_slots; i++) {
+		append(0);
+	}
+	for (int i = 0; i < _ptr_slots; i++) {
+		append(0);
+	}
+	ct.cleanup();
+}
+
 void GDScriptByteCodeGenerator::write_call_script_function(const Address &p_target, const Address &p_base, const StringName &p_function_name, const Vector<Address> &p_arguments) {
 	append_opcode_and_argcount(p_target.mode == Address::NIL ? GDScriptFunction::OPCODE_CALL : GDScriptFunction::OPCODE_CALL_RETURN, 2 + p_arguments.size());
 	for (int i = 0; i < p_arguments.size(); i++) {
