@@ -640,11 +640,8 @@ GDScriptCodeGenerator::Address GDScriptCompiler::_parse_expression(CodeGen &code
 					gen->write_super_call(result, call->function_name, arguments);
 				} else {
 					if (callee->type == GDScriptParser::Node::IDENTIFIER) {
-						const GDScriptParser::IdentifierNode *callee_id = static_cast<const GDScriptParser::IdentifierNode *>(callee);
-						bool inline_script_call = callee_id->function_source != nullptr && callee_id->function_source->is_inline;
-
 						// Self function call.
-						if (!inline_script_call && ClassDB::has_method(codegen.script->native->get_name(), call->function_name)) {
+						if (ClassDB::has_method(codegen.script->native->get_name(), call->function_name)) {
 							// Native method, use faster path.
 							GDScriptCodeGenerator::Address self;
 							self.mode = GDScriptCodeGenerator::Address::SELF;
@@ -2571,10 +2568,6 @@ GDScriptFunction *GDScriptCompiler::_parse_function(Error &r_error, GDScript *p_
 	}
 
 	gd_function->method_info = method_info;
-
-	if (p_func) {
-		gd_function->inline_hint = p_func->is_inline;
-	}
 
 	if (!is_implicit_initializer && !is_implicit_ready && !p_for_lambda) {
 		p_script->member_functions[func_name] = gd_function;

@@ -934,7 +934,6 @@ public:
 		SuiteNode *body = nullptr;
 		bool is_abstract = false;
 		bool is_static = false; // For lambdas it's determined in the analyzer.
-		bool is_inline = false;
 		bool is_private = false;
 		bool is_coroutine = false;
 		Variant rpc_config;
@@ -1640,7 +1639,6 @@ private:
 	bool abstract_annotation(AnnotationNode *p_annotation, Node *p_target, ClassNode *p_class);
 	bool onready_annotation(AnnotationNode *p_annotation, Node *p_target, ClassNode *p_class);
 	bool private_annotation(AnnotationNode *p_annotation, Node *p_target, ClassNode *p_class);
-	bool inline_annotation(AnnotationNode *p_annotation, Node *p_target, ClassNode *p_class);
 	template <PropertyHint t_hint, Variant::Type t_type>
 	bool export_annotations(AnnotationNode *p_annotation, Node *p_target, ClassNode *p_class);
 	bool export_storage_annotation(AnnotationNode *p_annotation, Node *p_target, ClassNode *p_class);

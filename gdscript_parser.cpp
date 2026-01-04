@@ -151,7 +151,6 @@ GDScriptParser::GDScriptParser() {
 		register_annotation(MethodInfo("@static_unload"), AnnotationInfo::SCRIPT, &GDScriptParser::static_unload_annotation);
 		register_annotation(MethodInfo("@abstract"), AnnotationInfo::SCRIPT | AnnotationInfo::CLASS | AnnotationInfo::FUNCTION, &GDScriptParser::abstract_annotation);
 		register_annotation(MethodInfo("@private"), AnnotationInfo::VARIABLE | AnnotationInfo::FUNCTION, &GDScriptParser::private_annotation);
-		register_annotation(MethodInfo("@inline"), AnnotationInfo::FUNCTION, &GDScriptParser::inline_annotation);
 		// Onready annotation.
 		register_annotation(MethodInfo("@onready"), AnnotationInfo::VARIABLE, &GDScriptParser::onready_annotation);
 		// Export annotations.
@@ -4573,27 +4572,6 @@ bool GDScriptParser::private_annotation(AnnotationNode *p_annotation, Node *p_ta
 		return false;
 	}
 	function_node->is_private = true;
-	return true;
-}
-
-bool GDScriptParser::inline_annotation(AnnotationNode *p_annotation, Node *p_target, ClassNode *p_class) {
-	ERR_FAIL_COND_V_MSG(p_target->type != Node::FUNCTION, false, R"("@inline" annotation can only be applied to functions.)");
-
-	FunctionNode *function_node = static_cast<FunctionNode *>(p_target);
-	if (function_node->is_inline) {
-		push_error(R"("@inline" annotation can only be used once per function.)", p_annotation);
-		return false;
-	}
-	if (function_node->source_lambda != nullptr) {
-		push_error(R"("@inline" annotation cannot be applied to lambda functions.)", p_annotation);
-		return false;
-	}
-	if (function_node->is_abstract) {
-		push_error(R"("@inline" annotation cannot be applied to abstract functions.)", p_annotation);
-		return false;
-	}
-
-	function_node->is_inline = true;
 	return true;
 }
 
