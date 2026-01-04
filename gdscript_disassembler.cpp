@@ -1307,6 +1307,54 @@ void GDScriptFunction::disassemble(const Vector<String> &p_code_lines) const {
 				incr += 5;
 			} break;
 				DISASSEMBLE_ITERATE_TYPES(DISASSEMBLE_ITERATE);
+			case OPCODE_ITERATE_DICTIONARY_KEYS_FAST: {
+				text += "for-loop (dictionary keys fast) ";
+				text += DADDR(3);
+				text += " in ";
+				text += DADDR(2);
+				text += " counter ";
+				text += DADDR(1);
+				text += " end ";
+				text += itos(_code_ptr[ip + 4]);
+
+				incr += 5;
+			} break;
+			case OPCODE_ITERATE_DICTIONARY_VALUES_FAST: {
+				text += "for-loop (dictionary values fast) ";
+				text += DADDR(3);
+				text += " in ";
+				text += DADDR(2);
+				text += " counter ";
+				text += DADDR(1);
+				text += " end ";
+				text += itos(_code_ptr[ip + 4]);
+
+				incr += 5;
+			} break;
+			case OPCODE_ITERATE_ARRAY_FAST: {
+				text += "for-loop (array fast) ";
+				text += DADDR(3);
+				text += " in ";
+				text += DADDR(2);
+				text += " counter ";
+				text += DADDR(1);
+				text += " end ";
+				text += itos(_code_ptr[ip + 4]);
+
+				incr += 5;
+			} break;
+			case OPCODE_ITERATE_PACKED_ARRAY_FAST: {
+				text += "for-loop (packed array fast) ";
+				text += DADDR(3);
+				text += " in ";
+				text += DADDR(2);
+				text += " counter ";
+				text += DADDR(1);
+				text += " end ";
+				text += itos(_code_ptr[ip + 4]);
+
+				incr += 5;
+			} break;
 			case OPCODE_ITERATE_RANGE: {
 				text += "for-loop ";
 				text += DADDR(4);
@@ -1320,6 +1368,65 @@ void GDScriptFunction::disassemble(const Vector<String> &p_code_lines) const {
 				text += itos(_code_ptr[ip + 5]);
 
 				incr += 6;
+			} break;
+			case OPCODE_DICT_GET_OR_DEFAULT_FAST: {
+				text += "dict_get_or_default_fast ";
+				text += DADDR(4);
+				text += " = ";
+				text += DADDR(1);
+				text += ".get(";
+				text += DADDR(2);
+				text += ", ";
+				text += DADDR(3);
+				text += ")";
+
+				incr += 5;
+			} break;
+			case OPCODE_DICT_ADD_ASSIGN_FLOAT: {
+				text += "dict_add_assign_float ";
+				text += DADDR(1);
+				text += "[";
+				text += DADDR(2);
+				text += "] += ";
+				text += DADDR(3);
+
+				incr += 4;
+			} break;
+			case OPCODE_ARRAY_ADD_ASSIGN_FLOAT: {
+				text += "array_add_assign_float ";
+				text += DADDR(1);
+				text += "[";
+				text += DADDR(2);
+				text += "] += ";
+				text += DADDR(3);
+
+				incr += 4;
+			} break;
+			case OPCODE_PROPERTY_ADD_ASSIGN_FLOAT: {
+				text += "property_add_assign_float ";
+				text += DADDR(1);
+				text += " += ";
+				text += DADDR(2);
+
+				incr += 4 + (2 * (int)(sizeof(void *) / sizeof(int)));
+			} break;
+			case OPCODE_JUMP_IF_DICT_HAS: {
+				text += "jump_if_dict_has ";
+				text += DADDR(1);
+				text += ".has(";
+				text += DADDR(2);
+				text += ") -> ";
+				text += itos(_code_ptr[ip + 3]);
+
+				incr += 4;
+			} break;
+			case OPCODE_JUMP_IF_NOT_NULL: {
+				text += "jump_if_not_null ";
+				text += DADDR(1);
+				text += " -> ";
+				text += itos(_code_ptr[ip + 2]);
+
+				incr += 3;
 			} break;
 			case OPCODE_STORE_GLOBAL: {
 				text += "store global ";

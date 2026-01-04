@@ -378,7 +378,10 @@ void (*type_init_function_table[])(Variant *) = {
 		&&OPCODE_ITERATE_VECTOR3I,                       \
 		&&OPCODE_ITERATE_STRING,                         \
 		&&OPCODE_ITERATE_DICTIONARY,                     \
+		&&OPCODE_ITERATE_DICTIONARY_KEYS_FAST,           \
+		&&OPCODE_ITERATE_DICTIONARY_VALUES_FAST,         \
 		&&OPCODE_ITERATE_ARRAY,                          \
+		&&OPCODE_ITERATE_ARRAY_FAST,                     \
 		&&OPCODE_ITERATE_PACKED_BYTE_ARRAY,              \
 		&&OPCODE_ITERATE_PACKED_INT32_ARRAY,             \
 		&&OPCODE_ITERATE_PACKED_INT64_ARRAY,             \
@@ -389,8 +392,15 @@ void (*type_init_function_table[])(Variant *) = {
 		&&OPCODE_ITERATE_PACKED_VECTOR3_ARRAY,           \
 		&&OPCODE_ITERATE_PACKED_COLOR_ARRAY,             \
 		&&OPCODE_ITERATE_PACKED_VECTOR4_ARRAY,           \
+		&&OPCODE_ITERATE_PACKED_ARRAY_FAST,              \
 		&&OPCODE_ITERATE_OBJECT,                         \
 		&&OPCODE_ITERATE_RANGE,                          \
+		&&OPCODE_DICT_GET_OR_DEFAULT_FAST,               \
+		&&OPCODE_DICT_ADD_ASSIGN_FLOAT,                  \
+		&&OPCODE_ARRAY_ADD_ASSIGN_FLOAT,                 \
+		&&OPCODE_PROPERTY_ADD_ASSIGN_FLOAT,              \
+		&&OPCODE_JUMP_IF_DICT_HAS,                       \
+		&&OPCODE_JUMP_IF_NOT_NULL,                       \
 		&&OPCODE_STORE_GLOBAL,                           \
 		&&OPCODE_STORE_NAMED_GLOBAL,                     \
 		&&OPCODE_TYPE_ADJUST_BOOL,                       \
@@ -4872,6 +4882,62 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 			}
 			DISPATCH_OPCODE;
 
+			OPCODE(OPCODE_ITERATE_DICTIONARY_KEYS_FAST) {
+				// Same semantics as OPCODE_ITERATE_DICTIONARY (explicit name for loop-fusing work).
+				CHECK_SPACE(4);
+
+				GET_VARIANT_PTR(counter, 0);
+				GET_VARIANT_PTR(container, 1);
+
+				const Dictionary *dict = VariantInternal::get_dictionary((const Variant *)container);
+				const Variant *next = dict->next(counter);
+
+				if (!next) {
+					int jumpto = _code_ptr[ip + 4];
+					GD_ERR_BREAK(jumpto < 0 || jumpto > _code_size);
+					ip = jumpto;
+				} else {
+					GET_VARIANT_PTR(iterator, 2);
+					*counter = *next;
+					*iterator = *next;
+
+					ip += 5;
+				}
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_ITERATE_DICTIONARY_VALUES_FAST) {
+				CHECK_SPACE(4);
+
+				GET_VARIANT_PTR(counter, 0);
+				GET_VARIANT_PTR(container, 1);
+
+				Dictionary *dict = VariantInternal::get_dictionary(container);
+				const Variant *next_key = dict->next(counter);
+				if (!next_key) {
+					int jumpto = _code_ptr[ip + 4];
+					GD_ERR_BREAK(jumpto < 0 || jumpto > _code_size);
+					ip = jumpto;
+				} else {
+					GET_VARIANT_PTR(iterator, 2);
+					*counter = *next_key;
+					Variant *val_ptr = dict->getptr(*next_key);
+					if (unlikely(val_ptr == nullptr)) {
+#ifdef DEBUG_ENABLED
+						err_text = "Invalid dictionary iteration state (key missing).";
+						OPCODE_BREAK;
+#else
+						*iterator = Variant();
+						ip += 5;
+						DISPATCH_OPCODE;
+#endif
+					}
+					*iterator = *val_ptr;
+					ip += 5;
+				}
+			}
+			DISPATCH_OPCODE;
+
 			OPCODE(OPCODE_ITERATE_ARRAY) {
 				CHECK_SPACE(4);
 
@@ -4891,6 +4957,29 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					*iterator = array->get(*idx);
 
 					ip += 5; // Loop again.
+				}
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_ITERATE_ARRAY_FAST) {
+				// Same semantics as OPCODE_ITERATE_ARRAY (explicit name for loop-fusing work).
+				CHECK_SPACE(4);
+
+				GET_VARIANT_PTR(counter, 0);
+				GET_VARIANT_PTR(container, 1);
+
+				const Array *array = VariantInternal::get_array((const Variant *)container);
+				int64_t *idx = VariantInternal::get_int(counter);
+				(*idx)++;
+
+				if (*idx >= array->size()) {
+					int jumpto = _code_ptr[ip + 4];
+					GD_ERR_BREAK(jumpto < 0 || jumpto > _code_size);
+					ip = jumpto;
+				} else {
+					GET_VARIANT_PTR(iterator, 2);
+					*iterator = array->get(*idx);
+					ip += 5;
 				}
 			}
 			DISPATCH_OPCODE;
@@ -4925,6 +5014,293 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 			OPCODE_ITERATE_PACKED_ARRAY(VECTOR3, Vector3, get_vector3_array, get_vector3);
 			OPCODE_ITERATE_PACKED_ARRAY(COLOR, Color, get_color_array, get_color);
 			OPCODE_ITERATE_PACKED_ARRAY(VECTOR4, Vector4, get_vector4_array, get_vector4);
+
+			OPCODE(OPCODE_ITERATE_PACKED_ARRAY_FAST) {
+				CHECK_SPACE(4);
+
+				GET_VARIANT_PTR(counter, 0);
+				GET_VARIANT_PTR(container, 1);
+
+				int64_t *idx = VariantInternal::get_int(counter);
+				(*idx)++;
+
+				int jumpto = _code_ptr[ip + 4];
+				GD_ERR_BREAK(jumpto < 0 || jumpto > _code_size);
+
+				GET_VARIANT_PTR(iterator, 2);
+
+				switch (container->get_type()) {
+					case Variant::PACKED_BYTE_ARRAY: {
+						const Vector<uint8_t> *array = VariantInternal::get_byte_array((const Variant *)container);
+						if (*idx >= array->size()) {
+							ip = jumpto;
+							break;
+						}
+						VariantInternal::initialize(iterator, Variant::INT);
+						*VariantInternal::get_int(iterator) = array->get((int)*idx);
+						ip += 5;
+					} break;
+					case Variant::PACKED_INT32_ARRAY: {
+						const Vector<int32_t> *array = VariantInternal::get_int32_array((const Variant *)container);
+						if (*idx >= array->size()) {
+							ip = jumpto;
+							break;
+						}
+						VariantInternal::initialize(iterator, Variant::INT);
+						*VariantInternal::get_int(iterator) = array->get((int)*idx);
+						ip += 5;
+					} break;
+					case Variant::PACKED_INT64_ARRAY: {
+						const Vector<int64_t> *array = VariantInternal::get_int64_array((const Variant *)container);
+						if (*idx >= array->size()) {
+							ip = jumpto;
+							break;
+						}
+						VariantInternal::initialize(iterator, Variant::INT);
+						*VariantInternal::get_int(iterator) = array->get((int)*idx);
+						ip += 5;
+					} break;
+					case Variant::PACKED_FLOAT32_ARRAY: {
+						const Vector<float> *array = VariantInternal::get_float32_array((const Variant *)container);
+						if (*idx >= array->size()) {
+							ip = jumpto;
+							break;
+						}
+						VariantInternal::initialize(iterator, Variant::FLOAT);
+						*VariantInternal::get_float(iterator) = array->get((int)*idx);
+						ip += 5;
+					} break;
+					case Variant::PACKED_FLOAT64_ARRAY: {
+						const Vector<double> *array = VariantInternal::get_float64_array((const Variant *)container);
+						if (*idx >= array->size()) {
+							ip = jumpto;
+							break;
+						}
+						VariantInternal::initialize(iterator, Variant::FLOAT);
+						*VariantInternal::get_float(iterator) = array->get((int)*idx);
+						ip += 5;
+					} break;
+					case Variant::PACKED_STRING_ARRAY: {
+						const Vector<String> *array = VariantInternal::get_string_array((const Variant *)container);
+						if (*idx >= array->size()) {
+							ip = jumpto;
+							break;
+						}
+						VariantInternal::initialize(iterator, Variant::STRING);
+						*VariantInternal::get_string(iterator) = array->get((int)*idx);
+						ip += 5;
+					} break;
+					case Variant::PACKED_VECTOR2_ARRAY: {
+						const Vector<Vector2> *array = VariantInternal::get_vector2_array((const Variant *)container);
+						if (*idx >= array->size()) {
+							ip = jumpto;
+							break;
+						}
+						VariantInternal::initialize(iterator, Variant::VECTOR2);
+						*VariantInternal::get_vector2(iterator) = array->get((int)*idx);
+						ip += 5;
+					} break;
+					case Variant::PACKED_VECTOR3_ARRAY: {
+						const Vector<Vector3> *array = VariantInternal::get_vector3_array((const Variant *)container);
+						if (*idx >= array->size()) {
+							ip = jumpto;
+							break;
+						}
+						VariantInternal::initialize(iterator, Variant::VECTOR3);
+						*VariantInternal::get_vector3(iterator) = array->get((int)*idx);
+						ip += 5;
+					} break;
+					case Variant::PACKED_COLOR_ARRAY: {
+						const Vector<Color> *array = VariantInternal::get_color_array((const Variant *)container);
+						if (*idx >= array->size()) {
+							ip = jumpto;
+							break;
+						}
+						VariantInternal::initialize(iterator, Variant::COLOR);
+						*VariantInternal::get_color(iterator) = array->get((int)*idx);
+						ip += 5;
+					} break;
+					case Variant::PACKED_VECTOR4_ARRAY: {
+						const Vector<Vector4> *array = VariantInternal::get_vector4_array((const Variant *)container);
+						if (*idx >= array->size()) {
+							ip = jumpto;
+							break;
+						}
+						VariantInternal::initialize(iterator, Variant::VECTOR4);
+						*VariantInternal::get_vector4(iterator) = array->get((int)*idx);
+						ip += 5;
+					} break;
+					default: {
+#ifdef DEBUG_ENABLED
+						err_text = "Invalid base for ITERATE_PACKED_ARRAY_FAST.";
+						OPCODE_BREAK;
+#else
+						ip = jumpto;
+#endif
+					} break;
+				}
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_DICT_GET_OR_DEFAULT_FAST) {
+				CHECK_SPACE(4);
+
+				GET_VARIANT_PTR(container, 0);
+				GET_VARIANT_PTR(key, 1);
+				GET_VARIANT_PTR(defval, 2);
+				GET_VARIANT_PTR(dst, 3);
+
+				Dictionary *dict = VariantInternal::get_dictionary(container);
+				*dst = dict->get(*key, *defval);
+				ip += 5;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_DICT_ADD_ASSIGN_FLOAT) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(container, 0);
+				GET_VARIANT_PTR(key, 1);
+				GET_VARIANT_PTR(addend, 2);
+
+				if (unlikely(container->is_read_only())) {
+#ifdef DEBUG_ENABLED
+					err_text = "Attempt to modify a read-only Dictionary.";
+					OPCODE_BREAK;
+#else
+					ip += 4;
+					DISPATCH_OPCODE;
+#endif
+				}
+
+				Dictionary *dict = VariantInternal::get_dictionary(container);
+				Variant *val_ptr = dict->getptr(*key);
+				if (unlikely(val_ptr == nullptr)) {
+#ifdef DEBUG_ENABLED
+					String v = key->operator String();
+					if (!v.is_empty()) {
+						v = "'" + v + "'";
+					} else {
+						v = "of type '" + _get_var_type(key) + "'";
+					}
+					err_text = "Invalid access to key " + v + " on a base object of type '" + _get_var_type(container) + "'.";
+					OPCODE_BREAK;
+#else
+					ip += 4;
+					DISPATCH_OPCODE;
+#endif
+				}
+
+#ifdef DEBUG_ENABLED
+				if (unlikely(val_ptr->get_type() != Variant::FLOAT || addend->get_type() != Variant::FLOAT)) {
+					err_text = "Invalid operands for DICT_ADD_ASSIGN_FLOAT.";
+					OPCODE_BREAK;
+				}
+#endif
+				*VariantInternal::get_float(val_ptr) += *VariantInternal::get_float(addend);
+				ip += 4;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_ARRAY_ADD_ASSIGN_FLOAT) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(container, 0);
+				GET_VARIANT_PTR(index, 1);
+				GET_VARIANT_PTR(addend, 2);
+
+				if (unlikely(container->is_read_only())) {
+#ifdef DEBUG_ENABLED
+					err_text = "Attempt to modify a read-only Array.";
+					OPCODE_BREAK;
+#else
+					ip += 4;
+					DISPATCH_OPCODE;
+#endif
+				}
+
+				Array *array = VariantInternal::get_array(container);
+				int64_t idx = *VariantInternal::get_int(index);
+				if (unlikely(idx < 0 || idx >= array->size())) {
+#ifdef DEBUG_ENABLED
+					err_text = "Out of bounds get/set index (Array).";
+					OPCODE_BREAK;
+#else
+					ip += 4;
+					DISPATCH_OPCODE;
+#endif
+				}
+
+				Variant v = array->get((int)idx);
+#ifdef DEBUG_ENABLED
+				if (unlikely(v.get_type() != Variant::FLOAT || addend->get_type() != Variant::FLOAT)) {
+					err_text = "Invalid operands for ARRAY_ADD_ASSIGN_FLOAT.";
+					OPCODE_BREAK;
+				}
+#endif
+				*VariantInternal::get_float(&v) += *VariantInternal::get_float(addend);
+				array->set((int)idx, v);
+				ip += 4;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_PROPERTY_ADD_ASSIGN_FLOAT) {
+				constexpr int _pointer_size = sizeof(Variant::ValidatedGetter) / sizeof(*_code_ptr);
+				CHECK_SPACE(3 + _pointer_size * 2);
+
+				GET_VARIANT_PTR(base, 0);
+				GET_VARIANT_PTR(addend, 1);
+
+				Variant::ValidatedGetter getter = *reinterpret_cast<Variant::ValidatedGetter *>(&_code_ptr[ip + 3]);
+				Variant::ValidatedSetter setter = *reinterpret_cast<Variant::ValidatedSetter *>(&_code_ptr[ip + 3 + _pointer_size]);
+
+				Variant tmp;
+				getter(base, &tmp);
+
+#ifdef DEBUG_ENABLED
+				if (unlikely(tmp.get_type() != Variant::FLOAT || addend->get_type() != Variant::FLOAT)) {
+					err_text = "Invalid operands for PROPERTY_ADD_ASSIGN_FLOAT.";
+					OPCODE_BREAK;
+				}
+#endif
+				*VariantInternal::get_float(&tmp) += *VariantInternal::get_float(addend);
+				setter(base, &tmp);
+				ip += 4 + _pointer_size * 2;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_JUMP_IF_DICT_HAS) {
+				CHECK_SPACE(3);
+
+				GET_VARIANT_PTR(container, 0);
+				GET_VARIANT_PTR(key, 1);
+
+				int jumpto = _code_ptr[ip + 3];
+				GD_ERR_BREAK(jumpto < 0 || jumpto > _code_size);
+
+				Dictionary *dict = VariantInternal::get_dictionary(container);
+				if (dict->has(*key)) {
+					ip = jumpto;
+				} else {
+					ip += 4;
+				}
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_JUMP_IF_NOT_NULL) {
+				CHECK_SPACE(2);
+				GET_VARIANT_PTR(value, 0);
+
+				int jumpto = _code_ptr[ip + 2];
+				GD_ERR_BREAK(jumpto < 0 || jumpto > _code_size);
+
+				if (value->get_type() != Variant::NIL) {
+					ip = jumpto;
+				} else {
+					ip += 3;
+				}
+			}
+			DISPATCH_OPCODE;
 
 			OPCODE(OPCODE_ITERATE_OBJECT) {
 				CHECK_SPACE(4);

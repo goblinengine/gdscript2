@@ -1179,28 +1179,64 @@ GDScriptCodeGenerator::Address GDScriptCompiler::_parse_expression(CodeGen &code
 					}
 				}
 
+				bool fused_in_place = false;
 				// Perform operator if any.
 				if (assignment->operation != GDScriptParser::AssignmentNode::OP_NONE) {
-					GDScriptCodeGenerator::Address op_result = codegen.add_temporary(_gdtype_from_datatype(assignment->get_datatype(), codegen.script));
-					GDScriptCodeGenerator::Address value = codegen.add_temporary(_gdtype_from_datatype(subscript->get_datatype(), codegen.script));
-					if (subscript->is_attribute) {
-						gen->write_get_named(value, name, prev_base);
-					} else {
-						gen->write_get(value, key, prev_base);
+					if (assignment->variant_op == Variant::OP_ADD &&
+							assigned.type.kind == GDScriptDataType::BUILTIN && assigned.type.builtin_type == Variant::FLOAT) {
+						GDScriptDataType subscript_value_type = _gdtype_from_datatype(subscript->get_datatype(), codegen.script);
+						if (!subscript->is_attribute && prev_base.type.kind == GDScriptDataType::BUILTIN) {
+							if (subscript_value_type.kind == GDScriptDataType::BUILTIN && subscript_value_type.builtin_type == Variant::FLOAT &&
+									prev_base.type.builtin_type == Variant::ARRAY &&
+									key.type.kind == GDScriptDataType::BUILTIN && key.type.builtin_type == Variant::INT) {
+								gen->write_array_add_assign_float(prev_base, key, assigned);
+								fused_in_place = true;
+							} else if (subscript_value_type.kind == GDScriptDataType::BUILTIN && subscript_value_type.builtin_type == Variant::FLOAT &&
+									prev_base.type.builtin_type == Variant::DICTIONARY) {
+								gen->write_dict_add_assign_float(prev_base, key, assigned);
+								fused_in_place = true;
+							}
+						} else if (subscript->is_attribute) {
+							// This updates `prev_base` in-place (e.g. Vector3.x += 1.0).
+							if (prev_base.type.kind == GDScriptDataType::BUILTIN &&
+									Variant::get_member_validated_getter(prev_base.type.builtin_type, name) &&
+									Variant::get_member_validated_setter(prev_base.type.builtin_type, name) &&
+									Variant::get_member_type(prev_base.type.builtin_type, name) == Variant::FLOAT) {
+								gen->write_property_add_assign_float(prev_base, name, assigned);
+								fused_in_place = true;
+							}
+						}
 					}
-					gen->write_binary_operator(op_result, assignment->variant_op, value, assigned);
-					gen->pop_temporary();
-					if (assigned.mode == GDScriptCodeGenerator::Address::TEMPORARY) {
+
+					if (!fused_in_place) {
+						GDScriptCodeGenerator::Address op_result = codegen.add_temporary(_gdtype_from_datatype(assignment->get_datatype(), codegen.script));
+						GDScriptCodeGenerator::Address value = codegen.add_temporary(_gdtype_from_datatype(subscript->get_datatype(), codegen.script));
+						if (subscript->is_attribute) {
+							gen->write_get_named(value, name, prev_base);
+						} else {
+							gen->write_get(value, key, prev_base);
+						}
+						gen->write_binary_operator(op_result, assignment->variant_op, value, assigned);
 						gen->pop_temporary();
+						if (assigned.mode == GDScriptCodeGenerator::Address::TEMPORARY) {
+							gen->pop_temporary();
+						}
+						assigned = op_result;
+					} else {
+						// Operator fused into in-place update; keep `assigned` as-is.
+						if (assigned.mode == GDScriptCodeGenerator::Address::TEMPORARY) {
+							gen->pop_temporary();
+						}
 					}
-					assigned = op_result;
 				}
 
 				// Perform assignment.
-				if (subscript->is_attribute) {
-					gen->write_set_named(prev_base, name, assigned);
-				} else {
-					gen->write_set(prev_base, key, assigned);
+				if (!fused_in_place) {
+					if (subscript->is_attribute) {
+						gen->write_set_named(prev_base, name, assigned);
+					} else {
+						gen->write_set(prev_base, key, assigned);
+					}
 				}
 				if (key.mode == GDScriptCodeGenerator::Address::TEMPORARY) {
 					gen->pop_temporary();

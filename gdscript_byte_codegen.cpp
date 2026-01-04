@@ -1160,6 +1160,43 @@ void GDScriptByteCodeGenerator::write_dec_int(const Address &p_target) {
 	append(p_target);
 }
 
+void GDScriptByteCodeGenerator::write_array_add_assign_float(const Address &p_array, const Address &p_index, const Address &p_addend) {
+	append_opcode(GDScriptFunction::OPCODE_ARRAY_ADD_ASSIGN_FLOAT);
+	append(p_array);
+	append(p_index);
+	append(p_addend);
+}
+
+void GDScriptByteCodeGenerator::write_dict_add_assign_float(const Address &p_dict, const Address &p_key, const Address &p_addend) {
+	append_opcode(GDScriptFunction::OPCODE_DICT_ADD_ASSIGN_FLOAT);
+	append(p_dict);
+	append(p_key);
+	append(p_addend);
+}
+
+void GDScriptByteCodeGenerator::write_property_add_assign_float(const Address &p_base, const StringName &p_name, const Address &p_addend) {
+	ERR_FAIL_COND(!HAS_BUILTIN_TYPE(p_base));
+	ERR_FAIL_COND(p_base.type.kind != GDScriptDataType::BUILTIN);
+	ERR_FAIL_COND(!Variant::get_member_validated_getter(p_base.type.builtin_type, p_name));
+	ERR_FAIL_COND(!Variant::get_member_validated_setter(p_base.type.builtin_type, p_name));
+	ERR_FAIL_COND(Variant::get_member_type(p_base.type.builtin_type, p_name) != Variant::FLOAT);
+	ERR_FAIL_COND(!IS_BUILTIN_TYPE(p_addend, Variant::FLOAT));
+
+	Variant::ValidatedGetter getter = Variant::get_member_validated_getter(p_base.type.builtin_type, p_name);
+	Variant::ValidatedSetter setter = Variant::get_member_validated_setter(p_base.type.builtin_type, p_name);
+
+	append_opcode(GDScriptFunction::OPCODE_PROPERTY_ADD_ASSIGN_FLOAT);
+	append(p_base);
+	append(p_addend);
+	append(getter);
+	append(setter);
+
+#ifdef DEBUG_ENABLED
+	add_debug_name(getter_names, get_getter_pos(getter), p_name);
+	add_debug_name(setter_names, get_setter_pos(setter), p_name);
+#endif
+}
+
 void GDScriptByteCodeGenerator::write_assign_null(const Address &p_target) {
 	append_opcode(GDScriptFunction::OPCODE_ASSIGN_NULL);
 	append(p_target);
@@ -1353,6 +1390,15 @@ void GDScriptByteCodeGenerator::write_call_utility(const Address &p_target, cons
 }
 
 void GDScriptByteCodeGenerator::write_call_builtin_type(const Address &p_target, const Address &p_base, Variant::Type p_type, const StringName &p_method, bool p_is_static, const Vector<Address> &p_arguments) {
+	if (!p_is_static && p_type == Variant::DICTIONARY && p_method == SNAME("get") && p_arguments.size() == 2) {
+		append_opcode(GDScriptFunction::OPCODE_DICT_GET_OR_DEFAULT_FAST);
+		append(p_base);
+		append(p_arguments[0]);
+		append(p_arguments[1]);
+		append(p_target);
+		return;
+	}
+
 	bool is_validated = false;
 
 	// Check if all types are correct.
@@ -1840,15 +1886,15 @@ void GDScriptByteCodeGenerator::write_for(const Address &p_variable, bool p_use_
 					break;
 				case Variant::DICTIONARY:
 					begin_opcode = GDScriptFunction::OPCODE_ITERATE_BEGIN_DICTIONARY;
-					iterate_opcode = GDScriptFunction::OPCODE_ITERATE_DICTIONARY;
+					iterate_opcode = GDScriptFunction::OPCODE_ITERATE_DICTIONARY_KEYS_FAST;
 					break;
 				case Variant::ARRAY:
 					begin_opcode = GDScriptFunction::OPCODE_ITERATE_BEGIN_ARRAY;
-					iterate_opcode = GDScriptFunction::OPCODE_ITERATE_ARRAY;
+					iterate_opcode = GDScriptFunction::OPCODE_ITERATE_ARRAY_FAST;
 					break;
 				case Variant::PACKED_BYTE_ARRAY:
 					begin_opcode = GDScriptFunction::OPCODE_ITERATE_BEGIN_PACKED_BYTE_ARRAY;
-					iterate_opcode = GDScriptFunction::OPCODE_ITERATE_PACKED_BYTE_ARRAY;
+					iterate_opcode = GDScriptFunction::OPCODE_ITERATE_PACKED_BYTE_ARRAY; // No change
 					break;
 				case Variant::PACKED_INT32_ARRAY:
 					begin_opcode = GDScriptFunction::OPCODE_ITERATE_BEGIN_PACKED_INT32_ARRAY;
