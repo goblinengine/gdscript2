@@ -640,8 +640,11 @@ GDScriptCodeGenerator::Address GDScriptCompiler::_parse_expression(CodeGen &code
 					gen->write_super_call(result, call->function_name, arguments);
 				} else {
 					if (callee->type == GDScriptParser::Node::IDENTIFIER) {
+						const GDScriptParser::IdentifierNode *callee_id = static_cast<const GDScriptParser::IdentifierNode *>(callee);
+						bool inline_script_call = callee_id->function_source != nullptr && callee_id->function_source->is_inline;
+
 						// Self function call.
-						if (ClassDB::has_method(codegen.script->native->get_name(), call->function_name)) {
+						if (!inline_script_call && ClassDB::has_method(codegen.script->native->get_name(), call->function_name)) {
 							// Native method, use faster path.
 							GDScriptCodeGenerator::Address self;
 							self.mode = GDScriptCodeGenerator::Address::SELF;
@@ -2569,6 +2572,10 @@ GDScriptFunction *GDScriptCompiler::_parse_function(Error &r_error, GDScript *p_
 
 	gd_function->method_info = method_info;
 
+	if (p_func) {
+		gd_function->inline_hint = p_func->is_inline;
+	}
+
 	if (!is_implicit_initializer && !is_implicit_ready && !p_for_lambda) {
 		p_script->member_functions[func_name] = gd_function;
 	}
@@ -2860,7 +2867,16 @@ Error GDScriptCompiler::_prepare_compilation(GDScript *p_script, const GDScriptP
 			}
 
 			p_script->base = base;
-			p_script->member_indices = base->member_indices;
+			p_script->member_indices.clear();
+			for (const KeyValue<StringName, GDScript::MemberInfo> &E : base->member_indices) {
+				const GDScript::MemberInfo &base_info = E.value;
+				if (base_info.is_private) {
+					StringName hidden_name = StringName(vformat("@__private_%s_%d", String(E.key), base_info.index));
+					p_script->member_indices.insert(hidden_name, base_info);
+				} else {
+					p_script->member_indices.insert(E.key, base_info);
+				}
+			}
 		} break;
 		default: {
 			_set_error("Parser bug (please report): invalid inheritance.", nullptr);
@@ -2882,6 +2898,7 @@ Error GDScriptCompiler::_prepare_compilation(GDScript *p_script, const GDScriptP
 				StringName name = variable->identifier->name;
 
 				GDScript::MemberInfo minfo;
+				minfo.is_private = variable->is_private;
 				switch (variable->property) {
 					case GDScriptParser::VariableNode::PROP_NONE:
 						break; // Nothing to do.
@@ -2907,6 +2924,10 @@ Error GDScriptCompiler::_prepare_compilation(GDScript *p_script, const GDScriptP
 				PropertyInfo prop_info = variable->get_datatype().to_property_info(name);
 				PropertyInfo export_info = variable->export_info;
 
+				if (variable->is_private) {
+					prop_info.usage = PROPERTY_USAGE_STORAGE | PROPERTY_USAGE_INTERNAL;
+				}
+
 				if (variable->exported) {
 					if (!minfo.data_type.has_type()) {
 						prop_info.type = export_info.type;
@@ -2925,7 +2946,9 @@ Error GDScriptCompiler::_prepare_compilation(GDScript *p_script, const GDScriptP
 				} else {
 					minfo.index = p_script->member_indices.size();
 					p_script->member_indices[name] = minfo;
-					p_script->members.insert(name);
+					if (!variable->is_private) {
+						p_script->members.insert(name);
+					}
 				}
 
 #ifdef TOOLS_ENABLED

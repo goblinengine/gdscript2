@@ -70,6 +70,7 @@ class GDScript : public Script {
 		StringName getter;
 		GDScriptDataType data_type;
 		PropertyInfo property_info;
+		bool is_private = false;
 	};
 
 	struct ClearData {

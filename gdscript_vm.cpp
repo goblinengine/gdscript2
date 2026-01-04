@@ -298,6 +298,8 @@ void (*type_init_function_table[])(Variant *) = {
 		&&OPCODE_CALL,                                   \
 		&&OPCODE_CALL_RETURN,                            \
 		&&OPCODE_CALL_ASYNC,                             \
+		&&OPCODE_CALL_SELF_INLINE,                       \
+		&&OPCODE_CALL_SELF_INLINE_RET,                   \
 		&&OPCODE_CALL_UTILITY,                           \
 		&&OPCODE_CALL_UTILITY_VALIDATED,                 \
 		&&OPCODE_CALL_GDSCRIPT_UTILITY,                  \
@@ -2403,6 +2405,90 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 #endif // DEBUG_ENABLED
 
 				ip += 3 + _call_ic_ints;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_CALL_SELF_INLINE)
+			OPCODE(OPCODE_CALL_SELF_INLINE_RET) {
+				bool call_ret = (_code_ptr[ip]) == OPCODE_CALL_SELF_INLINE_RET;
+				LOAD_INSTRUCTION_ARGS
+				constexpr int k_inline_self_cache_ints = (sizeof(void *) / sizeof(int)) * 2;
+				CHECK_SPACE(3 + instr_arg_count + k_inline_self_cache_ints);
+
+				ip += instr_arg_count;
+
+				int argc = _code_ptr[ip + 1];
+				GD_ERR_BREAK(argc < 0);
+				int methodname_idx = _code_ptr[ip + 2];
+				GD_ERR_BREAK(methodname_idx < 0 || methodname_idx >= _global_names_count);
+				const StringName *methodname = &_global_names_ptr[methodname_idx];
+
+				GDScript **cached_script_slot = reinterpret_cast<GDScript **>(&_code_ptr[ip + 3]);
+				GDScriptFunction **cached_function_slot = reinterpret_cast<GDScriptFunction **>(&_code_ptr[ip + 3 + (sizeof(void *) / sizeof(int))]);
+				GDScript *cached_script = cached_script_slot[0];
+				GDScriptFunction *cached_function = cached_function_slot[0];
+
+				Variant **argptrs = instruction_args;
+
+				Variant *ret_ptr = nullptr;
+				Variant temp_ret;
+				if (call_ret) {
+					GET_INSTRUCTION_ARG(ret_arg, argc);
+					ret_ptr = ret_arg;
+				}
+
+				GDScript *target_script = p_instance ? p_instance->script.ptr() : _script;
+				GDScriptFunction *call_function = nullptr;
+
+				if (target_script && cached_script == target_script && cached_function) {
+					call_function = cached_function;
+				}
+
+				if (!call_function && target_script) {
+					GDScript *walker = target_script;
+					while (walker && !call_function) {
+						HashMap<StringName, GDScriptFunction *>::ConstIterator E = walker->member_functions.find(*methodname);
+						if (E) {
+							call_function = E->value;
+							target_script = walker;
+							break;
+						}
+						walker = walker->base.ptr();
+					}
+
+					if (call_function) {
+						cached_script_slot[0] = target_script;
+						cached_function_slot[0] = call_function;
+					}
+				}
+
+				Callable::CallError err;
+
+				if (call_function) {
+					temp_ret = call_function->call(p_instance, (const Variant **)argptrs, argc, err);
+					if (call_ret && ret_ptr) {
+						*ret_ptr = temp_ret;
+					}
+				} else {
+					Variant self_var;
+					if (p_instance) {
+						self_var = p_instance->owner;
+					}
+					if (call_ret && ret_ptr) {
+						self_var.callp(*methodname, (const Variant **)argptrs, argc, *ret_ptr, err);
+						temp_ret = *ret_ptr;
+					} else {
+						self_var.callp(*methodname, (const Variant **)argptrs, argc, temp_ret, err);
+					}
+				}
+
+				if (err.error != Callable::CallError::CALL_OK) {
+					String methodstr = *methodname;
+					err_text = _get_call_error("inline function '" + methodstr + "'", (const Variant **)argptrs, argc, temp_ret, err);
+					OPCODE_BREAK;
+				}
+
+				ip += 3 + k_inline_self_cache_ints;
 			}
 			DISPATCH_OPCODE;
 

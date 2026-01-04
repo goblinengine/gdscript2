@@ -276,6 +276,9 @@ void ExtendGDScriptParser::parse_class_symbol(const GDScriptParser::ClassNode *p
 
 		switch (m.type) {
 			case ClassNode::Member::VARIABLE: {
+				if (m.variable->is_private) {
+					break;
+				}
 				LSP::DocumentSymbol symbol;
 				symbol.name = m.variable->identifier->name;
 				symbol.kind = m.variable->property == VariableNode::PROP_NONE ? LSP::SymbolKind::Variable : LSP::SymbolKind::Property;
@@ -455,6 +458,9 @@ void ExtendGDScriptParser::parse_class_symbol(const GDScriptParser::ClassNode *p
 				r_symbol.children.push_back(symbol);
 			} break;
 			case ClassNode::Member::FUNCTION: {
+				if (m.function->is_private) {
+					break;
+				}
 				LSP::DocumentSymbol symbol;
 				parse_function_symbol(m.function, symbol);
 				r_symbol.children.push_back(symbol);

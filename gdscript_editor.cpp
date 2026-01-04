@@ -1165,6 +1165,12 @@ static void _find_identifiers_in_class(const GDScriptParser::ClassNode *p_class,
 			for (int i = 0; i < clss->members.size(); i++) {
 				const int location = p_recursion_depth == 0 ? classes_processed : (p_recursion_depth | ScriptLanguage::LOCATION_PARENT_MASK);
 				const GDScriptParser::ClassNode::Member &member = clss->members[i];
+				const bool is_private_member = (member.type == GDScriptParser::ClassNode::Member::VARIABLE && member.variable->is_private) ||
+						(member.type == GDScriptParser::ClassNode::Member::FUNCTION && member.function->is_private);
+				// Allow private suggestions only on the declaring class (outer == false) and only for the immediate class (classes_processed == 0).
+				if (is_private_member && (outer || classes_processed > 0 || p_recursion_depth > 0)) {
+					continue;
+				}
 				ScriptLanguage::CodeCompletionOption option;
 				switch (member.type) {
 					case GDScriptParser::ClassNode::Member::VARIABLE:
