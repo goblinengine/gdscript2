@@ -254,6 +254,73 @@ static bool _can_use_validate_call(const MethodBind *p_method, const Vector<GDSc
 	return true;
 }
 
+static bool _gdscript2_hot_native_methods_cache_dirty = true;
+
+static void _gdscript2_hot_native_methods_mark_dirty() {
+	_gdscript2_hot_native_methods_cache_dirty = true;
+}
+
+static bool _is_hot_method_bind(const MethodBind *p_method) {
+	static bool connected = false;
+	static HashSet<const MethodBind *> hot_methodbinds;
+
+	if (!connected) {
+		ProjectSettings *ps = ProjectSettings::get_singleton();
+		if (ps && !ps->is_connected("settings_changed", callable_mp_static(&_gdscript2_hot_native_methods_mark_dirty))) {
+			ps->connect("settings_changed", callable_mp_static(&_gdscript2_hot_native_methods_mark_dirty));
+		}
+		connected = true;
+	}
+
+	if (_gdscript2_hot_native_methods_cache_dirty) {
+		hot_methodbinds.clear();
+
+		ProjectSettings *ps = ProjectSettings::get_singleton();
+		PackedStringArray list;
+		bool use_defaults = true;
+		if (ps) {
+			use_defaults = ps->get_setting("gdscript2/compiler/hot_native_methods_use_defaults", true).booleanize();
+			if (ps->has_setting("gdscript2/compiler/hot_native_methods")) {
+				list = ps->get_setting("gdscript2/compiler/hot_native_methods");
+			}
+		}
+
+		// If user cleared the list and disabled defaults: nothing is hot.
+		if (list.is_empty() && !use_defaults) {
+			_gdscript2_hot_native_methods_cache_dirty = false;
+			return false;
+		}
+
+		// Convert "Class.method" strings to MethodBind* once.
+		for (int i = 0; i < list.size(); i++) {
+			String entry = list[i].strip_edges();
+			if (entry.is_empty()) {
+				continue;
+			}
+			int sep = entry.rfind(".");
+			if (sep < 0) {
+				sep = entry.rfind(":");
+			}
+			if (sep < 0) {
+				continue;
+			}
+			String cls = entry.substr(0, sep).strip_edges();
+			String method = entry.substr(sep + 1, entry.length()).strip_edges();
+			if (cls.is_empty() || method.is_empty()) {
+				continue;
+			}
+			MethodBind *mb = ClassDB::get_method(StringName(cls), StringName(method));
+			if (mb) {
+				hot_methodbinds.insert(mb);
+			}
+		}
+
+		_gdscript2_hot_native_methods_cache_dirty = false;
+	}
+
+	return hot_methodbinds.has(p_method);
+}
+
 GDScriptCodeGenerator::Address GDScriptCompiler::_parse_expression(CodeGen &codegen, Error &r_error, const GDScriptParser::ExpressionNode *p_expression, bool p_root, bool p_initializer) {
 	if (p_expression->is_constant && !(p_expression->get_datatype().is_meta_type && p_expression->get_datatype().kind == GDScriptParser::DataType::CLASS)) {
 		return codegen.add_constant(p_expression->reduced_value);
@@ -647,7 +714,10 @@ GDScriptCodeGenerator::Address GDScriptCompiler::_parse_expression(CodeGen &code
 							self.mode = GDScriptCodeGenerator::Address::SELF;
 							MethodBind *method = ClassDB::get_method(codegen.script->native->get_name(), call->function_name);
 
-							if (_can_use_validate_call(method, arguments)) {
+							bool can_validate = _can_use_validate_call(method, arguments);
+							if (can_validate && _is_hot_method_bind(method)) {
+								gen->write_call_method_bind_hot(result, self, method, arguments);
+							} else if (can_validate) {
 								// Exact arguments, use validated call.
 								gen->write_call_method_bind_validated(result, self, method, arguments);
 							} else {
@@ -681,7 +751,10 @@ GDScriptCodeGenerator::Address GDScriptCompiler::_parse_expression(CodeGen &code
 								// It's a static native method call.
 								StringName class_name = static_cast<GDScriptParser::IdentifierNode *>(subscript->base)->name;
 								MethodBind *method = ClassDB::get_method(class_name, subscript->attribute->name);
-								if (_can_use_validate_call(method, arguments)) {
+								bool can_validate = _can_use_validate_call(method, arguments);
+								if (can_validate && _is_hot_method_bind(method)) {
+									gen->write_call_native_static_hot(result, method, arguments);
+								} else if (can_validate) {
 									// Exact arguments, use validated call.
 									gen->write_call_native_static_validated(result, method, arguments);
 								} else {
@@ -705,7 +778,10 @@ GDScriptCodeGenerator::Address GDScriptCompiler::_parse_expression(CodeGen &code
 									}
 									if (GDScriptAnalyzer::class_exists(class_name) && ClassDB::has_method(class_name, call->function_name)) {
 										MethodBind *method = ClassDB::get_method(class_name, call->function_name);
-										if (_can_use_validate_call(method, arguments)) {
+										bool can_validate = _can_use_validate_call(method, arguments);
+										if (can_validate && _is_hot_method_bind(method)) {
+											gen->write_call_method_bind_hot(result, base, method, arguments);
+										} else if (can_validate) {
 											// Exact arguments, use validated call.
 											gen->write_call_method_bind_validated(result, base, method, arguments);
 										} else {

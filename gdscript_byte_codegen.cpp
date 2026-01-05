@@ -1325,6 +1325,37 @@ void GDScriptByteCodeGenerator::write_call_native_static_validated(const GDScrip
 	ct.cleanup();
 }
 
+void GDScriptByteCodeGenerator::write_call_native_static_hot(const GDScriptCodeGenerator::Address &p_target, MethodBind *p_method, const Vector<GDScriptCodeGenerator::Address> &p_arguments) {
+	// Hot path: identical layout to validated, but dedicated opcode for quick dispatch.
+	Variant::Type return_type = Variant::NIL;
+	bool has_return = p_method->has_return();
+
+	if (has_return) {
+		PropertyInfo return_info = p_method->get_return_info();
+		return_type = return_info.type;
+	}
+
+	CallTarget ct = get_call_target(p_target, return_type);
+
+	if (has_return) {
+		Variant::Type temp_type = temporaries[ct.target.address].type;
+		if (temp_type != return_type) {
+			write_type_adjust(ct.target, return_type);
+		}
+	}
+
+	GDScriptFunction::Opcode code = p_method->has_return() ? GDScriptFunction::OPCODE_CALL_NATIVE_STATIC_HOT_RETURN : GDScriptFunction::OPCODE_CALL_NATIVE_STATIC_HOT_NO_RETURN;
+	append_opcode_and_argcount(code, 1 + p_arguments.size());
+
+	for (int i = 0; i < p_arguments.size(); i++) {
+		append(p_arguments[i]);
+	}
+	append(ct.target);
+	append(p_arguments.size());
+	append(p_method);
+	ct.cleanup();
+}
+
 void GDScriptByteCodeGenerator::write_call_method_bind(const Address &p_target, const Address &p_base, MethodBind *p_method, const Vector<Address> &p_arguments) {
 	append_opcode_and_argcount(p_target.mode == Address::NIL ? GDScriptFunction::OPCODE_CALL_METHOD_BIND : GDScriptFunction::OPCODE_CALL_METHOD_BIND_RET, 2 + p_arguments.size());
 	for (int i = 0; i < p_arguments.size(); i++) {
@@ -1357,6 +1388,38 @@ void GDScriptByteCodeGenerator::write_call_method_bind_validated(const Address &
 	}
 
 	GDScriptFunction::Opcode code = p_method->has_return() ? GDScriptFunction::OPCODE_CALL_METHOD_BIND_VALIDATED_RETURN : GDScriptFunction::OPCODE_CALL_METHOD_BIND_VALIDATED_NO_RETURN;
+	append_opcode_and_argcount(code, 2 + p_arguments.size());
+
+	for (int i = 0; i < p_arguments.size(); i++) {
+		append(p_arguments[i]);
+	}
+	append(p_base);
+	append(ct.target);
+	append(p_arguments.size());
+	append(p_method);
+	ct.cleanup();
+}
+
+void GDScriptByteCodeGenerator::write_call_method_bind_hot(const Address &p_target, const Address &p_base, MethodBind *p_method, const Vector<Address> &p_arguments) {
+	// Hot path: identical layout to validated, but dedicated opcode for quick dispatch.
+	Variant::Type return_type = Variant::NIL;
+	bool has_return = p_method->has_return();
+
+	if (has_return) {
+		PropertyInfo return_info = p_method->get_return_info();
+		return_type = return_info.type;
+	}
+
+	CallTarget ct = get_call_target(p_target, return_type);
+
+	if (has_return) {
+		Variant::Type temp_type = temporaries[ct.target.address].type;
+		if (temp_type != return_type) {
+			write_type_adjust(ct.target, return_type);
+		}
+	}
+
+	GDScriptFunction::Opcode code = p_method->has_return() ? GDScriptFunction::OPCODE_CALL_METHOD_BIND_HOT_RETURN : GDScriptFunction::OPCODE_CALL_METHOD_BIND_HOT_NO_RETURN;
 	append_opcode_and_argcount(code, 2 + p_arguments.size());
 
 	for (int i = 0; i < p_arguments.size(); i++) {

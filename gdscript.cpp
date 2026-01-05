@@ -2989,6 +2989,44 @@ GDScriptLanguage::GDScriptLanguage() {
 	track_call_stack = GLOBAL_DEF_RST("debug/settings/gdscript/always_track_call_stacks", false);
 	track_locals = GLOBAL_DEF_RST("debug/settings/gdscript/always_track_local_variables", false);
 
+	// GDScript2 compiler: hot native-call allowlist.
+	// Format entries as "ClassName.method_name" (e.g. "Node.get_child").
+	// If empty and `gdscript2/compiler/hot_native_methods_use_defaults` is true, a small default list is used.
+	GLOBAL_DEF("gdscript2/compiler/hot_native_methods_use_defaults", true);
+	PackedStringArray default_hot_methods;
+	// Node methods
+	default_hot_methods.push_back("Node.add_child");
+	default_hot_methods.push_back("Node.get_node");
+	default_hot_methods.push_back("Node.get_parent");
+	default_hot_methods.push_back("Node.get_tree");
+	default_hot_methods.push_back("Node.queue_free");
+	default_hot_methods.push_back("Node.is_inside_tree");
+	default_hot_methods.push_back("Node.get_path");
+	// Object methods
+	default_hot_methods.push_back("Object.get_instance_id");
+	default_hot_methods.push_back("Object.free");
+	default_hot_methods.push_back("Object.is_class");
+	// Array methods
+	default_hot_methods.push_back("Array.push_back");
+	default_hot_methods.push_back("Array.append");
+	default_hot_methods.push_back("Array.pop_back");
+	default_hot_methods.push_back("Array.size");
+	default_hot_methods.push_back("Array.clear");
+	// Dictionary methods
+	default_hot_methods.push_back("Dictionary.get");
+	default_hot_methods.push_back("Dictionary.has");
+	default_hot_methods.push_back("Dictionary.erase");
+	default_hot_methods.push_back("Dictionary.is_empty");
+	default_hot_methods.push_back("Dictionary.keys");
+	// Signal methods
+	default_hot_methods.push_back("Signal.connect");
+	default_hot_methods.push_back("Signal.emit");
+	// String methods
+	default_hot_methods.push_back("String.replace");
+	default_hot_methods.push_back("String.begins_with");
+	default_hot_methods.push_back("String.ends_with");
+	GLOBAL_DEF(PropertyInfo(Variant::PACKED_STRING_ARRAY, "gdscript2/compiler/hot_native_methods", PROPERTY_HINT_NONE, ""), default_hot_methods);
+
 #ifdef DEBUG_ENABLED
 	track_call_stack = true;
 	track_locals = track_locals || EngineDebugger::is_active();

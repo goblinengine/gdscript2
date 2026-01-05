@@ -813,6 +813,51 @@ void GDScriptFunction::disassemble(const Vector<String> &p_code_lines) const {
 				incr = 4 + argc;
 			} break;
 
+			case OPCODE_CALL_NATIVE_STATIC_HOT_RETURN: {
+				int instr_var_args = _code_ptr[++ip];
+				text += "call native static method hot (return) ";
+				MethodBind *method = _methods_ptr[_code_ptr[ip + 2 + instr_var_args]];
+				int argc = _code_ptr[ip + 1 + instr_var_args];
+				text += DADDR(1 + argc) + " = ";
+				text += method->get_instance_class();
+				text += ".";
+				text += method->get_name();
+				text += "(";
+				for (int i = 0; i < argc; i++) {
+					if (i > 0) {
+						text += ", ";
+					}
+					text += DADDR(1 + i);
+				}
+				text += ")";
+				incr = 4 + argc;
+			} break;
+
+			case OPCODE_CALL_NATIVE_STATIC_HOT_NO_RETURN: {
+				int instr_var_args = _code_ptr[++ip];
+
+				text += "call native static method hot (no return) ";
+
+				MethodBind *method = _methods_ptr[_code_ptr[ip + 2 + instr_var_args]];
+
+				int argc = _code_ptr[ip + 1 + instr_var_args];
+
+				text += method->get_instance_class();
+				text += ".";
+				text += method->get_name();
+				text += "(";
+
+				for (int i = 0; i < argc; i++) {
+					if (i > 0) {
+						text += ", ";
+					}
+					text += DADDR(1 + i);
+				}
+				text += ")";
+
+				incr = 4 + argc;
+			} break;
+
 			case OPCODE_CALL_NATIVE_STATIC_VALIDATED_NO_RETURN: {
 				int instr_var_args = _code_ptr[++ip];
 
@@ -847,6 +892,48 @@ void GDScriptFunction::disassemble(const Vector<String> &p_code_lines) const {
 				text += DADDR(1 + argc) + ".";
 				text += method->get_name();
 				text += "(";
+				for (int i = 0; i < argc; i++) {
+					if (i > 0) {
+						text += ", ";
+					}
+					text += DADDR(1 + i);
+				}
+				text += ")";
+				incr = 5 + argc;
+			} break;
+
+			case OPCODE_CALL_METHOD_BIND_HOT_RETURN: {
+				int instr_var_args = _code_ptr[++ip];
+				text += "call method-bind hot (return) ";
+				MethodBind *method = _methods_ptr[_code_ptr[ip + 2 + instr_var_args]];
+				int argc = _code_ptr[ip + 1 + instr_var_args];
+				text += DADDR(2 + argc) + " = ";
+				text += DADDR(1 + argc) + ".";
+				text += method->get_name();
+				text += "(";
+				for (int i = 0; i < argc; i++) {
+					if (i > 0) {
+						text += ", ";
+					}
+					text += DADDR(1 + i);
+				}
+				text += ")";
+				incr = 5 + argc;
+			} break;
+
+			case OPCODE_CALL_METHOD_BIND_HOT_NO_RETURN: {
+				int instr_var_args = _code_ptr[++ip];
+
+				text += "call method-bind hot (no return) ";
+
+				MethodBind *method = _methods_ptr[_code_ptr[ip + 2 + instr_var_args]];
+
+				int argc = _code_ptr[ip + 1 + instr_var_args];
+
+				text += DADDR(1 + argc) + ".";
+				text += method->get_name();
+				text += "(";
+
 				for (int i = 0; i < argc; i++) {
 					if (i > 0) {
 						text += ", ";

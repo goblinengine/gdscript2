@@ -309,8 +309,12 @@ void (*type_init_function_table[])(Variant *) = {
 		&&OPCODE_CALL_NATIVE_STATIC,                     \
 		&&OPCODE_CALL_NATIVE_STATIC_VALIDATED_RETURN,    \
 		&&OPCODE_CALL_NATIVE_STATIC_VALIDATED_NO_RETURN, \
+		&&OPCODE_CALL_NATIVE_STATIC_HOT_RETURN,          \
+		&&OPCODE_CALL_NATIVE_STATIC_HOT_NO_RETURN,       \
 		&&OPCODE_CALL_METHOD_BIND_VALIDATED_RETURN,      \
 		&&OPCODE_CALL_METHOD_BIND_VALIDATED_NO_RETURN,   \
+		&&OPCODE_CALL_METHOD_BIND_HOT_RETURN,            \
+		&&OPCODE_CALL_METHOD_BIND_HOT_NO_RETURN,         \
 		&&OPCODE_AWAIT,                                  \
 		&&OPCODE_AWAIT_RESUME,                           \
 		&&OPCODE_CREATE_LAMBDA,                          \
@@ -2651,6 +2655,110 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 			}
 			DISPATCH_OPCODE;
 
+			OPCODE(OPCODE_CALL_NATIVE_STATIC_HOT_RETURN) {
+				CHECK_SPACE(4);
+				const int instr_arg_count = _code_ptr[ip + 1];
+				CHECK_SPACE(4 + instr_arg_count);
+
+				const int argc = _code_ptr[ip + 2 + instr_arg_count];
+				GD_ERR_BREAK(argc < 0);
+
+				GD_ERR_BREAK(_code_ptr[ip + 3 + instr_arg_count] < 0 || _code_ptr[ip + 3 + instr_arg_count] >= _methods_count);
+				MethodBind *method = _methods_ptr[_code_ptr[ip + 3 + instr_arg_count]];
+
+				GodotProfileZoneScriptSystemCall(method, source, name, method->get_name(), line);
+
+				const Variant *argptrs_inline[8];
+				const Variant **argptrs = argptrs_inline;
+				if (argc > 8) {
+					// Fallback to shared buffer.
+					for (int i = 0; i < argc; i++) {
+						GET_VARIANT_PTR(v, i + 1);
+						instruction_args[i] = v;
+					}
+					argptrs = (const Variant **)instruction_args;
+				} else {
+					for (int i = 0; i < argc; i++) {
+						GET_VARIANT_PTR(v, i + 1);
+						argptrs_inline[i] = v;
+					}
+				}
+
+				GET_VARIANT_PTR(ret, argc + 1);
+
+	#ifdef DEBUG_ENABLED
+				uint64_t call_time = 0;
+				if (GDScriptLanguage::get_singleton()->profiling && GDScriptLanguage::get_singleton()->profile_native_calls) {
+					call_time = OS::get_singleton()->get_ticks_usec();
+				}
+	#endif
+
+				method->validated_call(nullptr, argptrs, ret);
+
+	#ifdef DEBUG_ENABLED
+				if (GDScriptLanguage::get_singleton()->profiling && GDScriptLanguage::get_singleton()->profile_native_calls) {
+					uint64_t t_taken = OS::get_singleton()->get_ticks_usec() - call_time;
+					_profile_native_call(t_taken, method->get_name(), method->get_instance_class());
+					function_call_time += t_taken;
+				}
+	#endif
+
+				ip += instr_arg_count + 4;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_CALL_NATIVE_STATIC_HOT_NO_RETURN) {
+				CHECK_SPACE(4);
+				const int instr_arg_count = _code_ptr[ip + 1];
+				CHECK_SPACE(4 + instr_arg_count);
+
+				const int argc = _code_ptr[ip + 2 + instr_arg_count];
+				GD_ERR_BREAK(argc < 0);
+
+				GD_ERR_BREAK(_code_ptr[ip + 3 + instr_arg_count] < 0 || _code_ptr[ip + 3 + instr_arg_count] >= _methods_count);
+				MethodBind *method = _methods_ptr[_code_ptr[ip + 3 + instr_arg_count]];
+
+				GodotProfileZoneScriptSystemCall(method, source, name, method->get_name(), line);
+
+				const Variant *argptrs_inline[8];
+				const Variant **argptrs = argptrs_inline;
+				if (argc > 8) {
+					for (int i = 0; i < argc; i++) {
+						GET_VARIANT_PTR(v, i + 1);
+						instruction_args[i] = v;
+					}
+					argptrs = (const Variant **)instruction_args;
+				} else {
+					for (int i = 0; i < argc; i++) {
+						GET_VARIANT_PTR(v, i + 1);
+						argptrs_inline[i] = v;
+					}
+				}
+
+				GET_VARIANT_PTR(ret, argc + 1);
+				VariantInternal::initialize(ret, Variant::NIL);
+
+	#ifdef DEBUG_ENABLED
+				uint64_t call_time = 0;
+				if (GDScriptLanguage::get_singleton()->profiling && GDScriptLanguage::get_singleton()->profile_native_calls) {
+					call_time = OS::get_singleton()->get_ticks_usec();
+				}
+	#endif
+
+				method->validated_call(nullptr, argptrs, nullptr);
+
+	#ifdef DEBUG_ENABLED
+				if (GDScriptLanguage::get_singleton()->profiling && GDScriptLanguage::get_singleton()->profile_native_calls) {
+					uint64_t t_taken = OS::get_singleton()->get_ticks_usec() - call_time;
+					_profile_native_call(t_taken, method->get_name(), method->get_instance_class());
+					function_call_time += t_taken;
+				}
+	#endif
+
+				ip += instr_arg_count + 4;
+			}
+			DISPATCH_OPCODE;
+
 			OPCODE(OPCODE_CALL_METHOD_BIND_VALIDATED_RETURN) {
 				LOAD_INSTRUCTION_ARGS
 				CHECK_SPACE(3 + instr_arg_count);
@@ -2752,6 +2860,112 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 					function_call_time += t_taken;
 				}
 #endif
+
+				ip += 3;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_CALL_METHOD_BIND_HOT_RETURN) {
+				LOAD_INSTRUCTION_ARGS
+				CHECK_SPACE(3 + instr_arg_count);
+
+				ip += instr_arg_count;
+
+				int argc = _code_ptr[ip + 1];
+				GD_ERR_BREAK(argc < 0);
+
+				GD_ERR_BREAK(_code_ptr[ip + 2] < 0 || _code_ptr[ip + 2] >= _methods_count);
+				MethodBind *method = _methods_ptr[_code_ptr[ip + 2]];
+
+				GodotProfileZoneScriptSystemCall(method, source, name, method->get_name(), line);
+
+				GET_INSTRUCTION_ARG(base, argc);
+
+	#ifdef DEBUG_ENABLED
+				bool freed = false;
+				Object *base_obj = base->get_validated_object_with_check(freed);
+				if (freed) {
+					err_text = METHOD_CALL_ON_FREED_INSTANCE_ERROR(method);
+					OPCODE_BREAK;
+				} else if (!base_obj) {
+					err_text = METHOD_CALL_ON_NULL_VALUE_ERROR(method);
+					OPCODE_BREAK;
+				}
+	#else
+				Object *base_obj = *VariantInternal::get_object(base);
+	#endif
+
+				Variant **argptrs = instruction_args;
+
+	#ifdef DEBUG_ENABLED
+				uint64_t call_time = 0;
+				if (GDScriptLanguage::get_singleton()->profiling && GDScriptLanguage::get_singleton()->profile_native_calls) {
+					call_time = OS::get_singleton()->get_ticks_usec();
+				}
+	#endif
+
+				GET_INSTRUCTION_ARG(ret, argc + 1);
+				method->validated_call(base_obj, (const Variant **)argptrs, ret);
+
+	#ifdef DEBUG_ENABLED
+				if (GDScriptLanguage::get_singleton()->profiling && GDScriptLanguage::get_singleton()->profile_native_calls) {
+					uint64_t t_taken = OS::get_singleton()->get_ticks_usec() - call_time;
+					_profile_native_call(t_taken, method->get_name(), method->get_instance_class());
+					function_call_time += t_taken;
+				}
+	#endif
+
+				ip += 3;
+			}
+			DISPATCH_OPCODE;
+
+			OPCODE(OPCODE_CALL_METHOD_BIND_HOT_NO_RETURN) {
+				LOAD_INSTRUCTION_ARGS
+				CHECK_SPACE(3 + instr_arg_count);
+
+				ip += instr_arg_count;
+
+				int argc = _code_ptr[ip + 1];
+				GD_ERR_BREAK(argc < 0);
+
+				GD_ERR_BREAK(_code_ptr[ip + 2] < 0 || _code_ptr[ip + 2] >= _methods_count);
+				MethodBind *method = _methods_ptr[_code_ptr[ip + 2]];
+
+				GodotProfileZoneScriptSystemCall(method, source, name, method->get_name(), line);
+
+				GET_INSTRUCTION_ARG(base, argc);
+	#ifdef DEBUG_ENABLED
+				bool freed = false;
+				Object *base_obj = base->get_validated_object_with_check(freed);
+				if (freed) {
+					err_text = METHOD_CALL_ON_FREED_INSTANCE_ERROR(method);
+					OPCODE_BREAK;
+				} else if (!base_obj) {
+					err_text = METHOD_CALL_ON_NULL_VALUE_ERROR(method);
+					OPCODE_BREAK;
+				}
+	#else
+				Object *base_obj = *VariantInternal::get_object(base);
+	#endif
+
+				Variant **argptrs = instruction_args;
+
+	#ifdef DEBUG_ENABLED
+				uint64_t call_time = 0;
+				if (GDScriptLanguage::get_singleton()->profiling && GDScriptLanguage::get_singleton()->profile_native_calls) {
+					call_time = OS::get_singleton()->get_ticks_usec();
+				}
+	#endif
+
+				method->validated_call(base_obj, (const Variant **)argptrs, nullptr);
+
+	#ifdef DEBUG_ENABLED
+				if (GDScriptLanguage::get_singleton()->profiling && GDScriptLanguage::get_singleton()->profile_native_calls) {
+					uint64_t t_taken = OS::get_singleton()->get_ticks_usec() - call_time;
+					_profile_native_call(t_taken, method->get_name(), method->get_instance_class());
+					function_call_time += t_taken;
+				}
+	#endif
 
 				ip += 3;
 			}
