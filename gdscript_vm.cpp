@@ -1283,8 +1283,8 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 									}
 								}
 								valid = ce.error == Callable::CallError::CALL_OK;
+								used_fast_path = valid;
 							}
-							used_fast_path = true; // includes negative cache hit
 						}
 					}
 				}
@@ -1415,8 +1415,8 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 								if (valid) {
 									*dst = ret;
 								}
+								used_fast_path = valid;
 							}
-							used_fast_path = true;
 						}
 					}
 				}
@@ -1509,8 +1509,8 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 						}
 					}
 
-					if (hit_slot != -1) {
-						if (psg) {
+						if (hit_slot != -1) {
+							if (psg) {
 							Callable::CallError ce;
 							if (psg->index >= 0) {
 								Variant boxed_index = psg->index;
@@ -1529,8 +1529,8 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 								}
 							}
 							valid = ce.error == Callable::CallError::CALL_OK;
+								used_fast_path = valid;
 						}
-						used_fast_path = true;
 					}
 				}
 
@@ -1613,8 +1613,8 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 						}
 					}
 
-					if (hit_slot != -1) {
-						if (psg) {
+						if (hit_slot != -1) {
+							if (psg) {
 							Callable::CallError ce;
 							Variant ret;
 							if (psg->index >= 0) {
@@ -1632,8 +1632,8 @@ Variant GDScriptFunction::call(GDScriptInstance *p_instance, const Variant **p_a
 							if (valid) {
 								*dst = ret;
 							}
+								used_fast_path = valid;
 						}
-						used_fast_path = true;
 					}
 				}
 
